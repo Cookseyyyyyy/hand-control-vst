@@ -30,7 +30,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Cache CMake FetchContent (JUCE)
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build/_deps
           key: ${{ runner.os }}-juce-${{ hashFiles('CMakeLists.txt') }}
@@ -38,7 +38,7 @@ jobs:
             ${{ runner.os }}-juce-
 
       - name: Cache ONNX Runtime and models
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build-cache
           key: ${{ runner.os }}-mlcache-${{ hashFiles('cmake/FetchOnnxRuntime.cmake', 'cmake/FetchHandModels.cmake') }}
