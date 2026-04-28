@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WiX 3 installer for Hand Control VST3 on Windows.
+  Build with:
+      candle HandControl.wxs -dVersion=0.1.0 -dPluginPath="..\..\build\plugin\HandControlPlugin_artefacts\Release\VST3\Hand Control.vst3"
+      light  -ext WixUIExtension HandControl.wixobj -o HandControl-0.1.0.msi
+
+  See installer/windows/build_msi.ps1 for a driver script.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="Hand Control"
+           Language="1033"
+           Version="$(var.Version)"
+           Manufacturer="HandControl"
+           UpgradeCode="8c0e7f10-7f8a-4c8b-b6a6-2a3f3f5bd4b2">
+
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Description="Hand Control VST3 plugin"
+             Manufacturer="HandControl" />
+
+    <MediaTemplate EmbedCab="yes" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Hand Control is already installed." />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="CommonFiles64Folder">
+        <Directory Id="VST3Dir" Name="VST3">
+          <Directory Id="HandControlVST3" Name="Hand Control.vst3" />
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <DirectoryRef Id="HandControlVST3">
+      <!-- The VST3 bundle is a folder; harvest it with heat.exe in build_msi.ps1. -->
+      <Component Id="PluginRootMarker" Guid="*" KeyPath="yes">
+        <File Source="$(var.PluginPath)\desktop.ini" KeyPath="no" Vital="no" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="MainFeature" Title="Hand Control" Level="1">
+      <ComponentRef Id="PluginRootMarker" />
+      <ComponentGroupRef Id="HarvestedVST3" />
+    </Feature>
+
+    <UI>
+      <UIRef Id="WixUI_Minimal" />
+    </UI>
+  </Product>
+</Wix>

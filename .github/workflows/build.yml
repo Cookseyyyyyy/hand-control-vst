@@ -1,0 +1,116 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            artifact_name: HandControl-windows-x64
+          - os: macos-14
+            artifact_name: HandControl-macos-universal
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache CMake FetchContent (JUCE)
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: ${{ runner.os }}-juce-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-juce-
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build plugin (VST3 + Standalone)
+        run: cmake --build build --config Release --parallel --target HandControlPlugin_VST3 HandControlPlugin_Standalone
+
+      - name: Build AU (macOS)
+        if: runner.os == 'macOS'
+        run: cmake --build build --config Release --parallel --target HandControlPlugin_AU
+
+      - name: Build tests
+        run: cmake --build build --config Release --parallel --target HandControlTests
+
+      - name: Run tests
+        working-directory: build
+        run: ctest --output-on-failure -C Release
+
+      - name: Stage artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $stage = "artifacts"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          $vst3 = Get-ChildItem -Path build -Recurse -Filter "Hand Control.vst3" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $vst3) { throw "VST3 bundle not found" }
+          Copy-Item -Recurse -Force $vst3.FullName $stage
+          $exe = Get-ChildItem -Path "build/plugin/HandControlPlugin_artefacts/Release/Standalone" -Filter "Hand Control.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($exe) { Copy-Item -Force $exe.FullName $stage }
+          Compress-Archive -Path "$stage/*" -DestinationPath "${{ matrix.artifact_name }}.zip" -Force
+
+      - name: Stage artifacts (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          find build -type d -name "Hand Control.vst3"      -exec cp -R {} artifacts/ \;
+          find build -type d -name "Hand Control.component" -exec cp -R {} artifacts/ \;
+          find build -type d -name "Hand Control.app"       -exec cp -R {} artifacts/ \; || true
+          cd artifacts && zip -yr "../${{ matrix.artifact_name }}.zip" . && cd ..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release
+          find dist -name "*.zip" -exec cp {} release/ \;
+          ls -la release
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release create "$TAG" \
+            --title "Hand Control $TAG" \
+            --notes-file .github/RELEASE_BODY.md \
+            release/*.zip

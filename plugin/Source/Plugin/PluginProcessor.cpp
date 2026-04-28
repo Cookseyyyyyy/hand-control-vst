@@ -1,0 +1,145 @@
+#include "PluginProcessor.h"
+#include "PluginEditor.h"
+
+#include "../Params/ParameterIDs.h"
+#include "../Params/ParameterLayout.h"
+#include "../Tracking/MockHandTracker.h"
+
+#if HANDCONTROL_HAS_TFLITE
+  #include "../Tracking/TFLiteHandTracker.h"
+#endif
+
+namespace handcontrol
+{
+    namespace
+    {
+        std::unique_ptr<tracking::IHandTracker> makeTrackerImpl()
+        {
+          #if HANDCONTROL_HAS_TFLITE
+            return std::make_unique<tracking::TFLiteHandTracker>();
+          #else
+            return std::make_unique<tracking::MockHandTracker>();
+          #endif
+        }
+    }
+
+    PluginProcessor::PluginProcessor()
+        : juce::AudioProcessor(BusesProperties()
+                                   .withInput("Input",  juce::AudioChannelSet::stereo(), true)
+                                   .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+          apvts(*this, nullptr, "HandControl", params::createLayout()),
+          bridge(apvts),
+          tracker(std::make_unique<tracking::HandTrackerThread>(bridge, makeTrackerImpl()))
+    {
+        apvts.addParameterListener(juce::String(params::cameraIndex.data(), params::cameraIndex.size()), this);
+        apvts.addParameterListener(juce::String(params::smoothing.data(),  params::smoothing.size()),  this);
+        apvts.addParameterListener(juce::String(params::holdOnLost.data(), params::holdOnLost.size()), this);
+        apvts.addParameterListener(juce::String(params::bypass.data(),     params::bypass.size()),     this);
+
+        restartTracker();
+    }
+
+    PluginProcessor::~PluginProcessor()
+    {
+        apvts.removeParameterListener(juce::String(params::cameraIndex.data(), params::cameraIndex.size()), this);
+        apvts.removeParameterListener(juce::String(params::smoothing.data(),  params::smoothing.size()),  this);
+        apvts.removeParameterListener(juce::String(params::holdOnLost.data(), params::holdOnLost.size()), this);
+        apvts.removeParameterListener(juce::String(params::bypass.data(),     params::bypass.size()),     this);
+    }
+
+    void PluginProcessor::prepareToPlay(double, int) {}
+    void PluginProcessor::releaseResources() {}
+
+    bool PluginProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
+    {
+        const auto in  = layouts.getMainInputChannelSet();
+        const auto out = layouts.getMainOutputChannelSet();
+        if (in.isDisabled() || out.isDisabled()) return false;
+        return in == out;
+    }
+
+    void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+    {
+        juce::ScopedNoDenormals noDenormals;
+
+        // This is a control plugin: it doesn't transform audio, it just lets the
+        // DAW see parameter automation generated from the tracker thread.
+        bridge.flushToParameters();
+
+        // Pass audio through untouched.
+        const auto numIn  = getTotalNumInputChannels();
+        const auto numOut = getTotalNumOutputChannels();
+        for (int ch = numIn; ch < numOut; ++ch)
+            buffer.clear(ch, 0, buffer.getNumSamples());
+    }
+
+    juce::AudioProcessorEditor* PluginProcessor::createEditor()
+    {
+        return new PluginEditor(*this);
+    }
+
+    void PluginProcessor::getStateInformation(juce::MemoryBlock& dest)
+    {
+        auto state = apvts.copyState();
+        if (auto xml = state.createXml())
+            copyXmlToBinary(*xml, dest);
+    }
+
+    void PluginProcessor::setStateInformation(const void* data, int size)
+    {
+        if (auto xml = getXmlFromBinary(data, size))
+            apvts.replaceState(juce::ValueTree::fromXml(*xml));
+    }
+
+    void PluginProcessor::parameterChanged(const juce::String& id, float newValue)
+    {
+        const juce::String cameraId (params::cameraIndex.data(),  params::cameraIndex.size());
+        const juce::String smoothId (params::smoothing.data(),    params::smoothing.size());
+        const juce::String holdId   (params::holdOnLost.data(),   params::holdOnLost.size());
+        const juce::String bypassId (params::bypass.data(),       params::bypass.size());
+
+        if (id == cameraId)
+        {
+            restartTracker();
+        }
+        else if (id == smoothId)
+        {
+            tracker->setSmoothing(newValue);
+        }
+        else if (id == holdId)
+        {
+            tracker->setHoldOnLost(newValue > 0.5f);
+        }
+        else if (id == bypassId)
+        {
+            tracker->setBypass(newValue > 0.5f);
+        }
+    }
+
+    void PluginProcessor::restartTracker()
+    {
+        lastStartError.clear();
+
+        auto* cameraParam = dynamic_cast<juce::AudioParameterInt*>(
+            apvts.getParameter(juce::String(params::cameraIndex.data(), params::cameraIndex.size())));
+        auto* smoothingParam = dynamic_cast<juce::AudioParameterFloat*>(
+            apvts.getParameter(juce::String(params::smoothing.data(), params::smoothing.size())));
+        auto* holdParam = dynamic_cast<juce::AudioParameterBool*>(
+            apvts.getParameter(juce::String(params::holdOnLost.data(), params::holdOnLost.size())));
+        auto* bypassParam = dynamic_cast<juce::AudioParameterBool*>(
+            apvts.getParameter(juce::String(params::bypass.data(), params::bypass.size())));
+
+        if (smoothingParam) tracker->setSmoothing(smoothingParam->get());
+        if (holdParam)      tracker->setHoldOnLost(holdParam->get());
+        if (bypassParam)    tracker->setBypass(bypassParam->get());
+
+        const int cameraIdx = cameraParam ? cameraParam->get() : 0;
+        if (auto err = tracker->start(cameraIdx))
+            lastStartError = juce::String(*err);
+    }
+}
+
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
+{
+    return new handcontrol::PluginProcessor();
+}
