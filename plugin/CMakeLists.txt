@@ -60,6 +60,7 @@ target_sources(HandControlPlugin PRIVATE
     Source/Tracking/MockHandTracker.h
     Source/Tracking/OnnxHandTracker.cpp
     Source/Tracking/OnnxHandTracker.h
+    Source/Tracking/OrtDelayLoad.cpp
     Source/Tracking/PalmAnchors.cpp
     Source/Tracking/PalmAnchors.h
     Source/Tracking/ImagePreprocess.cpp
@@ -118,13 +119,12 @@ set_target_properties(HandControlPlugin PROPERTIES
     CXX_EXTENSIONS OFF)
 
 if(WIN32)
-    # Tell the Windows loader to search the DLL's own directory (inside the
-    # VST3 bundle) when resolving onnxruntime.dll. Without this, any process
-    # that LoadLibraryWs our VST3 - including juce_vst3_helper, Ableton, and
-    # DAW plugin scanners - would search their own directory instead and
-    # fail to find the runtime.
-    # /DEPENDENTLOADFLAG:0x100 == LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR
-    target_link_options(HandControlPlugin PRIVATE "/DEPENDENTLOADFLAG:0x100")
+    # Delay-load onnxruntime.dll so Ableton's plugin scanner can LoadLibrary
+    # our VST3 without onnxruntime.dll being on the system PATH.
+    # The option must be on the final VST3/Standalone link target (not the
+    # shared code lib), so we defer it to a post-configure step below.
+    # delayimp provides the delay-load stub runtime.
+    target_link_libraries(HandControlPlugin PRIVATE delayimp)
 endif()
 
 # -----------------------------------------------------------------------------
@@ -191,6 +191,15 @@ foreach(_fmt VST3 AU Standalone)
     set(_sub_target HandControlPlugin_${_fmt})
     if(TARGET ${_sub_target})
         handcontrol_stage_runtime_into_bundle(${_sub_target})
+
+        # Apply delay-load on the final link so Windows can scan/load the
+        # VST3 before onnxruntime.dll is located. The OrtDelayLoad hook then
+        # resolves it from the bundle directory at first use.
+        if(WIN32)
+            target_link_options(${_sub_target} PRIVATE
+                "/DELAYLOAD:onnxruntime.dll"
+                "/DEPENDENTLOADFLAG:0x100")
+        endif()
     endif()
 endforeach()
 
