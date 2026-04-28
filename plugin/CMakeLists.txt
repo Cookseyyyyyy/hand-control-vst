@@ -16,6 +16,12 @@ juce_add_plugin(HandControlPlugin
     # ourselves so that our runtime DLL ends up in the bundle *before* the copy
     # runs. See handcontrol_copy_runtime_to() below.
     COPY_PLUGIN_AFTER_BUILD    FALSE
+    # Skip build-time generation of moduleinfo.json (JUCE runs juce_vst3_helper
+    # which LoadBundle's our VST3 post-build; this crashes on macOS CI when the
+    # bundle loads its embedded ONNX Runtime dylib, and hosts are fine with the
+    # runtime-scan fallback). Ableton, Logic, Bitwig, Reaper etc. all load the
+    # bundle at scan time to extract metadata when moduleinfo.json is absent.
+    VST3_AUTO_MANIFEST         FALSE
     HARDENED_RUNTIME_ENABLED   TRUE
     MICROPHONE_PERMISSION_ENABLED TRUE
     CAMERA_PERMISSION_ENABLED  TRUE
