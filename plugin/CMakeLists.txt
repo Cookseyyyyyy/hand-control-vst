@@ -149,8 +149,6 @@ function(handcontrol_stage_runtime_into_bundle target)
         # We want the DLL in place BEFORE juce_vst3_helper.exe runs, which
         # happens at VST3 post-build. Attach to PRE_LINK so the DLL lands next
         # to the module ahead of JUCE's post-build scan.
-        # (TARGET_FILE_DIR is valid at PRE_LINK time for shared libs in
-        # multi-config generators.)
         foreach(rt ${ONNXRUNTIME_RUNTIME_LIBRARIES})
             add_custom_command(TARGET ${target} PRE_LINK
                 COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -164,9 +162,11 @@ function(handcontrol_stage_runtime_into_bundle target)
     elseif(APPLE)
         # Bundle layout: <Name>.vst3/Contents/MacOS/<Name>
         # Place dylib at <Name>.vst3/Contents/Resources/ and set rpath.
+        # PRE_LINK so the dylib is in place before JUCE's post-build bundle
+        # load / codesign / moduleinfo steps run.
         foreach(rt ${ONNXRUNTIME_RUNTIME_LIBRARIES})
             get_filename_component(_rt_name "${rt}" NAME)
-            add_custom_command(TARGET ${target} POST_BUILD
+            add_custom_command(TARGET ${target} PRE_LINK
                 COMMAND ${CMAKE_COMMAND} -E make_directory
                     "$<TARGET_BUNDLE_DIR:${target}>/Contents/Resources"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
