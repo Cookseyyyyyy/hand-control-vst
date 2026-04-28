@@ -4,22 +4,28 @@
 #include "../Params/ParameterIDs.h"
 #include "../Params/ParameterLayout.h"
 #include "../Tracking/MockHandTracker.h"
+#include "../Tracking/OnnxHandTracker.h"
 
-#if HANDCONTROL_HAS_TFLITE
-  #include "../Tracking/TFLiteHandTracker.h"
-#endif
+#include <cstdlib>
 
 namespace handcontrol
 {
     namespace
     {
+        /** Select which tracker implementation to use.
+            Default: real MediaPipe-via-ONNX tracker.
+            Override for development or headless testing by setting the
+            environment variable HANDCONTROL_USE_MOCK_TRACKER=1 before loading
+            the plugin. */
         std::unique_ptr<tracking::IHandTracker> makeTrackerImpl()
         {
-          #if HANDCONTROL_HAS_TFLITE
-            return std::make_unique<tracking::TFLiteHandTracker>();
-          #else
-            return std::make_unique<tracking::MockHandTracker>();
-          #endif
+            if (const char* env = std::getenv("HANDCONTROL_USE_MOCK_TRACKER"))
+            {
+                const juce::String v (env);
+                if (v == "1" || v.equalsIgnoreCase("true") || v.equalsIgnoreCase("yes"))
+                    return std::make_unique<tracking::MockHandTracker>();
+            }
+            return std::make_unique<tracking::OnnxHandTracker>();
         }
     }
 

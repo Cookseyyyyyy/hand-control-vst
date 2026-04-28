@@ -83,12 +83,30 @@ The tests include golden-value checks that the C++ normaliser produces the
 same numeric outputs as the original Python script for the same landmark
 inputs - see `tests/NormalizerTests.cpp` and `docs/OSCHANDCONTROL_MATH.md`.
 
-### Real hand tracking (optional)
+### How the tracker is built
 
-The default build uses `MockHandTracker`, which generates a synthetic hand
-whose fingers oscillate. This exists so the plugin loads and maps end-to-end
-without any ML dependencies. To enable real hand tracking via TensorFlow
-Lite, see [`docs/MEDIAPIPE_INTEGRATION.md`](docs/MEDIAPIPE_INTEGRATION.md).
+Real hand tracking ships by default. On first configure CMake downloads:
+
+- [ONNX Runtime 1.21.0](https://github.com/microsoft/onnxruntime/releases/tag/v1.21.0)
+  prebuilt binaries from Microsoft (macOS universal2 or Windows x64),
+- The [MediaPipe palm detection + hand landmark ONNX models](https://huggingface.co/opencv/handpose_estimation_mediapipe)
+  from OpenCV Zoo (Apache 2.0).
+
+All of the above is cached in `build-cache/` so subsequent configures are
+fast. SHA256 hashes are enforced for every download.
+
+Models are embedded into the plugin binary via `juce_add_binary_data`. The
+ONNX Runtime shared library is copied into the plugin bundle at build time
+and bound via a linker flag (`/DEPENDENTLOADFLAG:0x100` on Windows,
+`@loader_path/../Resources` rpath on macOS), so the plugin is a single
+self-contained artefact that loads cleanly in any DAW.
+
+### Debugging with a mock tracker
+
+If you want to iterate on UI or bridge code without a webcam, set
+`HANDCONTROL_USE_MOCK_TRACKER=1` in the environment before launching the
+DAW or the Standalone. The plugin will switch to a deterministic mock
+tracker whose fingers oscillate predictably.
 
 ## Repository layout
 
@@ -107,21 +125,19 @@ installer/
   windows/                     # WiX installer definition
 docs/
   OSCHANDCONTROL_MATH.md       # Spec the Normalizer implements
-  MEDIAPIPE_INTEGRATION.md     # How to wire in real hand tracking
+  ML_PIPELINE.md               # How the real hand tracker works end-to-end
+cmake/
+  FetchOnnxRuntime.cmake       # Downloads + caches ONNX Runtime
+  FetchHandModels.cmake        # Downloads + caches MediaPipe hand models
 .github/workflows/build.yml    # CI: builds + tests on Mac and Windows
 ```
 
 ## Status
 
-See [the project plan](../../.cursor/plans) (if present) for milestone
-tracking. Short version:
-
 - [x] JUCE skeleton with 8 mappable params
 - [x] Camera capture + preview via JUCE
-- [x] Hand tracker interface + mock implementation
-- [x] Tracker thread wired into the plugin
+- [x] Real MediaPipe-based hand tracker via ONNX Runtime
 - [x] Ported OSCHandcontrol math + One-Euro smoothing
 - [x] Custom dark theme + landmark overlay + meters
 - [x] Installer scaffolds (WiX + pkgbuild)
-- [ ] TFLite-based real hand tracker
 - [ ] Signed + notarized release binaries

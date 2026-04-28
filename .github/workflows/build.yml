@@ -37,6 +37,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-juce-
 
+      - name: Cache ONNX Runtime and models
+        uses: actions/cache@v4
+        with:
+          path: build-cache
+          key: ${{ runner.os }}-mlcache-${{ hashFiles('cmake/FetchOnnxRuntime.cmake', 'cmake/FetchHandModels.cmake') }}
+          restore-keys: |
+            ${{ runner.os }}-mlcache-
+
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 

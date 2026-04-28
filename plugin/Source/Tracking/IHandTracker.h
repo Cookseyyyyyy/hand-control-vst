@@ -10,9 +10,12 @@
 namespace handcontrol::tracking
 {
     /** Abstract hand tracker. Implementations:
-        - `MockHandTracker` (default): generates procedural landmarks for testing.
-        - `TFLiteHandTracker` (optional, built when HANDCONTROL_ENABLE_TFLITE=ON):
-          real MediaPipe-derived palm + landmark model via TensorFlow Lite.
+        - `OnnxHandTracker` (default): real MediaPipe palm + landmark models
+          running via ONNX Runtime. Models and runtime are embedded in the
+          plugin binary.
+        - `MockHandTracker`: generates deterministic synthetic landmarks.
+          Enable by setting `HANDCONTROL_USE_MOCK_TRACKER=1` in the
+          environment. Useful for UI/bridge iteration without a webcam.
 
         Called from a single dedicated worker thread. Not thread-safe. */
     class IHandTracker

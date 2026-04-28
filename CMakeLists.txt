@@ -9,6 +9,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+
 if(APPLE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "macOS deployment target")
     set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS architectures")
@@ -22,7 +24,6 @@ else()
 endif()
 
 option(HANDCONTROL_BUILD_TESTS "Build unit tests" ON)
-option(HANDCONTROL_ENABLE_TFLITE "Enable real hand tracking via TFLite (requires prebuilt libs)" OFF)
 # Copy plug-in artefacts into the system plug-in folder after build. Nice for
 # local dev on a workstation where you have permission; turn off in CI or
 # restricted environments.
@@ -30,6 +31,10 @@ option(HANDCONTROL_COPY_PLUGIN_AFTER_BUILD "Copy built plugin into system plugin
 if(DEFINED ENV{CI})
     set(HANDCONTROL_COPY_PLUGIN_AFTER_BUILD OFF CACHE BOOL "" FORCE)
 endif()
+
+# ML runtime + models (downloaded & cached on first configure).
+include(FetchOnnxRuntime)
+include(FetchHandModels)
 
 include(FetchContent)
 
