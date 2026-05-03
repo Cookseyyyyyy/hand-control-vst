@@ -161,6 +161,36 @@ HC_TEST(pointInsideRoi_handles_rotation)
     HC_CHECK(! pointInsideRoi(200.0f, 200.0f, rotated45));
 }
 
+HC_TEST(bboxIou_basic_cases)
+{
+    // Identical boxes -> IoU 1.
+    HC_CHECK_NEAR(bboxIou(0, 0, 10, 10, 0, 0, 10, 10), 1.0f, 1.0e-5f);
+
+    // Disjoint -> IoU 0.
+    HC_CHECK_NEAR(bboxIou(0, 0, 10, 10, 20, 20, 30, 30), 0.0f, 1.0e-5f);
+
+    // 50% overlap (one box exactly half-shifted): intersection 50, union 150, IoU 1/3.
+    HC_CHECK_NEAR(bboxIou(0, 0, 10, 10, 5, 0, 15, 10), 1.0f / 3.0f, 1.0e-5f);
+
+    // Containment: small box inside big -> IoU = small / big.
+    HC_CHECK_NEAR(bboxIou(0, 0, 10, 10, 2, 2, 4, 4), 4.0f / 100.0f, 1.0e-5f);
+}
+
+HC_TEST(computeLandmarkBbox_encloses_all_points)
+{
+    std::array<Point2D, numLandmarks> lm {};
+    for (auto& p : lm) p = { 5.0f, 5.0f };
+    lm[0]  = { 1.0f, 2.0f };
+    lm[10] = { 9.0f, 8.0f };
+    lm[20] = { 0.0f, 7.0f };
+    const auto b = computeLandmarkBbox(lm);
+    HC_CHECK(b.valid);
+    HC_CHECK_NEAR(b.x1, 0.0f, 1.0e-5f);
+    HC_CHECK_NEAR(b.y1, 2.0f, 1.0e-5f);
+    HC_CHECK_NEAR(b.x2, 9.0f, 1.0e-5f);
+    HC_CHECK_NEAR(b.y2, 8.0f, 1.0e-5f);
+}
+
 HC_TEST(roiFromLandmarks_rotation_tracks_hand_orientation)
 {
     // Vertical hand (fingers up in image coords, i.e. wrist has larger y than

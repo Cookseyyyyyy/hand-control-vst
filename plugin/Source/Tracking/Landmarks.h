@@ -55,7 +55,10 @@ namespace handcontrol::tracking
 
     /** Optional per-frame diagnostics emitted by the tracker so the UI can
         show what the model is doing internally. None of these affect the
-        published parameter values; they are pure observability. */
+        published parameter values; they are pure observability.
+
+        v0.4 reduced tracking to one hand only; the size-2 arrays here are
+        kept for transitional simplicity but only index 0 is populated. */
     struct TrackerDiagnostics
     {
         float lastPalmScore { 0.0f };           // best palm-detector score this frame
@@ -65,8 +68,10 @@ namespace handcontrol::tracking
     };
 
     /** Result of a single tracking iteration over a camera frame.
-        Up to two hands, in the order MediaPipe returned them (unstable).
-        The `HandIdentityTracker` stabilises these into Hand 1 / Hand 2. */
+
+        v0.4: single hand only. `hands[1]` is unused but the array stays
+        size 2 so that downstream code (UI overlay, etc.) doesn't need to
+        be rewritten if multi-hand returns. */
     struct TrackingResult
     {
         double timestampSeconds { 0.0 };

@@ -75,8 +75,6 @@ target_sources(HandControlPlugin PRIVATE
     Source/Tracking/Normalizer.h
     Source/Tracking/OneEuroFilter.cpp
     Source/Tracking/OneEuroFilter.h
-    Source/Tracking/HandIdentityTracker.cpp
-    Source/Tracking/HandIdentityTracker.h
     Source/UI/PreviewComponent.cpp
     Source/UI/PreviewComponent.h
     Source/UI/ParameterMeter.cpp

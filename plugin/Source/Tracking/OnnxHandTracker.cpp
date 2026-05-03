@@ -34,24 +34,33 @@ namespace handcontrol::tracking
     {
         constexpr int kPalmInputSize     = 192;
         constexpr int kHandInputSize     = 224;
-        constexpr float kPalmScoreThresh = 0.4f;   // lowered: palm rarely runs now
-        constexpr float kPalmNmsIou      = 0.3f;
-        constexpr float kHandEnterThresh = 0.55f;  // confidence needed to fill a slot
-        constexpr float kHandExitThresh  = 0.4f;   // confidence below which a slot is dropped
-        constexpr int   kMaxHands        = 2;
-        constexpr int   kPalmLandmarks   = 7;
-        constexpr int   kHandLandmarks   = 21;
-        constexpr int   kPalmOutputDim   = 4 + kPalmLandmarks * 2;   // 18
 
-        // Re-run the palm detector occasionally even when slots are full, so we can
-        // pick up a new hand entering the frame.
-        constexpr int   kPalmRefreshInterval = 30;  // frames
+        // Match MediaPipe Hand Landmarker defaults exactly. v0.3 used a more
+        // permissive hysteresis (0.55/0.4) that held tracking with low-confidence
+        // landmarks and contributed to the "feels worse than v0.1" perception.
+        constexpr float kPalmScoreThresh = 0.5f;
+        constexpr float kPalmNmsIou      = 0.3f;
+        constexpr float kHandConfThresh  = 0.5f;
+
+        // Inter-frame tracking confidence: drop the cached ROI if the bbox of
+        // current landmarks overlaps the previous frame's bbox by less than
+        // this. Catches landmark drift before it compounds into a wrong ROI.
+        constexpr float kTrackingIouThresh = 0.5f;
+
+        // Periodic palm refresh: fall back to full re-detection every N frames
+        // even when tracking looks healthy. This recovers cheaply if the slot
+        // has subtly stuck on a hand-like region (e.g. a face).
+        constexpr int   kPalmRefreshInterval = 10;
+
+        constexpr int   kPalmLandmarks = 7;
+        constexpr int   kHandLandmarks = 21;
+        constexpr int   kPalmOutputDim = 4 + kPalmLandmarks * 2;   // 18
 
         struct PalmDetection
         {
             float score { 0.0f };
-            float x1, y1, x2, y2;                              // in original image pixels
-            std::array<Point2D, kPalmLandmarks> landmarks {};  // in original image pixels
+            float x1, y1, x2, y2;                              // original image pixels
+            std::array<Point2D, kPalmLandmarks> landmarks {};
         };
 
         float sigmoid(float v) noexcept
@@ -59,19 +68,9 @@ namespace handcontrol::tracking
             return 1.0f / (1.0f + std::exp(-v));
         }
 
-        float iou(const PalmDetection& a, const PalmDetection& b) noexcept
+        float palmIou(const PalmDetection& a, const PalmDetection& b) noexcept
         {
-            const float ix1 = std::max(a.x1, b.x1);
-            const float iy1 = std::max(a.y1, b.y1);
-            const float ix2 = std::min(a.x2, b.x2);
-            const float iy2 = std::min(a.y2, b.y2);
-            const float iw  = std::max(0.0f, ix2 - ix1);
-            const float ih  = std::max(0.0f, iy2 - iy1);
-            const float inter = iw * ih;
-            const float aA = std::max(0.0f, a.x2 - a.x1) * std::max(0.0f, a.y2 - a.y1);
-            const float aB = std::max(0.0f, b.x2 - b.x1) * std::max(0.0f, b.y2 - b.y1);
-            const float un = aA + aB - inter;
-            return un > 0.0f ? inter / un : 0.0f;
+            return bboxIou(a.x1, a.y1, a.x2, a.y2, b.x1, b.y1, b.x2, b.y2);
         }
 
         std::vector<PalmDetection> nms(std::vector<PalmDetection> in, float iouThresh)
@@ -84,13 +83,14 @@ namespace handcontrol::tracking
                 bool keep = true;
                 for (const auto& k : out)
                 {
-                    if (iou(d, k) > iouThresh) { keep = false; break; }
+                    if (palmIou(d, k) > iouThresh) { keep = false; break; }
                 }
                 if (keep) out.push_back(d);
             }
             return out;
         }
 
+        using BBox = LandmarkBbox;
     }
 
     struct OnnxHandTracker::Impl
@@ -118,19 +118,22 @@ namespace handcontrol::tracking
         std::vector<float> palmTensorBuf;
         std::vector<float> handTensorBuf;
 
-        // Per-slot tracking state. When a slot is active we keep its ROI
-        // and reuse it next frame, skipping the palm detector entirely.
-        struct TrackingSlot
+        // Single-hand tracking state. v0.3's two-slot setup was fundamentally
+        // flawed: there was no clean way to disambiguate "same hand, two
+        // detections" from "two real hands" without much heavier landmark
+        // matching. Single-hand removes the whole class of problem.
+        struct Slot
         {
-            bool   active        { false };
-            RoiTransform roi     {};
+            bool   active { false };
+            RoiTransform roi {};
             float  lastConfidence { 0.0f };
             Handedness handedness { Handedness::unknown };
             std::array<Point2D, kHandLandmarks> lastLandmarks {};
+            BBox   lastBbox {};
         };
-        std::array<TrackingSlot, kMaxHands> slots {};
+        Slot slot {};
 
-        int framesSincePalmRefresh { kPalmRefreshInterval };  // run on first frame
+        int framesSincePalmRefresh { kPalmRefreshInterval };
 
         Impl()
         {
@@ -314,9 +317,9 @@ namespace handcontrol::tracking
             const float bboxCx = 0.5f * (det.x1 + det.x2);
             const float bboxCy = 0.5f * (det.y1 + det.y2);
 
-            // Combined enlarge / shift approximating MediaPipe's two-pass transform
-            // for the *first* ROI from a palm detection. After the first frame we
-            // switch to roiFromLandmarks, which is much tighter.
+            // Initial ROI from a fresh palm detection: 2.6x scale, slight shift
+            // toward the fingers along the hand's axis. After the first frame
+            // we switch to the much-tighter landmark-derived ROI.
             const float side = std::max(bboxW, bboxH) * 2.6f;
             const float shiftLocal = -0.2f * side;
 
@@ -331,11 +334,9 @@ namespace handcontrol::tracking
             bool ok { false };
             float confidence { 0.0f };
             Handedness handedness { Handedness::unknown };
-            std::array<Point2D, kHandLandmarks> landmarks {};
+            std::array<Point2D, kHandLandmarks> landmarks {};  // pixel coords in source frame
         };
 
-        // Returns landmarks in *pixel* coords of the source frame. Normalisation
-        // to [0,1] for downstream consumers happens later in process().
         LandmarkResult runHandLandmarks(const juce::Image& frame, const RoiTransform& roi)
         {
             LandmarkResult out;
@@ -384,17 +385,12 @@ namespace handcontrol::tracking
                 const float ly = lmRaw[i * 3 + 1];
                 const float nx = (lx / handSide - 0.5f) * roi.size;
                 const float ny = (ly / handSide - 0.5f) * roi.size;
-                const float srcX = roi.centerX + (nx * cosR - ny * sinR);
-                const float srcY = roi.centerY + (nx * sinR + ny * cosR);
-
-                // Pixel coords - we will normalise when emitting the public result.
-                out.landmarks[static_cast<size_t>(i)].x = srcX;
-                out.landmarks[static_cast<size_t>(i)].y = srcY;
+                out.landmarks[static_cast<size_t>(i)].x = roi.centerX + (nx * cosR - ny * sinR);
+                out.landmarks[static_cast<size_t>(i)].y = roi.centerY + (nx * sinR + ny * cosR);
             }
             out.ok = true;
             return out;
         }
-
     };
 
     OnnxHandTracker::OnnxHandTracker() = default;
@@ -418,7 +414,7 @@ namespace handcontrol::tracking
             return err;
         impl->queryModelIO();
         impl->anchors = buildPalmAnchors();
-        for (auto& s : impl->slots) s.active = false;
+        impl->slot.active = false;
         impl->framesSincePalmRefresh = kPalmRefreshInterval;
         return std::nullopt;
     }
@@ -432,83 +428,114 @@ namespace handcontrol::tracking
             || impl->palmSession == nullptr || impl->handSession == nullptr)
             return result;
 
-        // ---- Step 1: refresh tracked slots from their cached ROIs ---------------
-        for (auto& slot : impl->slots)
-        {
-            if (! slot.active) continue;
+        auto& slot = impl->slot;
 
+        bool ranLandmarkOnCachedRoi = false;
+        bool ranPalm = false;
+
+        // ---- Step 1: cached-ROI tracking, if active ---------------------------
+        if (slot.active)
+        {
+            ranLandmarkOnCachedRoi = true;
             auto lr = impl->runHandLandmarks(frame, slot.roi);
-            if (! lr.ok || lr.confidence <= kHandExitThresh)
+
+            // Drop the slot if confidence is too low...
+            bool dropSlot = (! lr.ok) || (lr.confidence < kHandConfThresh);
+
+            // ...or if the new landmarks have drifted too far from the previous
+            // frame's bbox (MediaPipe's min_tracking_confidence equivalent).
+            if (! dropSlot)
+            {
+                const auto newBbox = computeLandmarkBbox(lr.landmarks);
+                if (slot.lastBbox.valid && newBbox.valid)
+                {
+                    const float iou = bboxIou(slot.lastBbox.x1, slot.lastBbox.y1,
+                                              slot.lastBbox.x2, slot.lastBbox.y2,
+                                              newBbox.x1, newBbox.y1,
+                                              newBbox.x2, newBbox.y2);
+                    if (iou < kTrackingIouThresh) dropSlot = true;
+                }
+            }
+
+            if (dropSlot)
             {
                 slot.active = false;
                 slot.lastConfidence = lr.ok ? lr.confidence : 0.0f;
-                continue;
             }
-
-            slot.lastConfidence = lr.confidence;
-            slot.handedness     = lr.handedness;
-            slot.lastLandmarks  = lr.landmarks;
-            slot.roi            = roiFromLandmarks(lr.landmarks);
+            else
+            {
+                slot.lastConfidence = lr.confidence;
+                slot.handedness     = lr.handedness;
+                slot.lastLandmarks  = lr.landmarks;
+                slot.roi            = roiFromLandmarks(lr.landmarks);
+                slot.lastBbox       = computeLandmarkBbox(lr.landmarks);
+            }
         }
 
-        // ---- Step 2: run palm detector if any slot is empty (or for refresh) ---
-        const bool anySlotEmpty = std::any_of(impl->slots.begin(), impl->slots.end(),
-                                              [](const auto& s) { return ! s.active; });
-        const bool periodicRefresh = (++impl->framesSincePalmRefresh) >= kPalmRefreshInterval;
+        // ---- Step 2: palm detector if no active slot, or for periodic refresh -
+        const bool needsPalm = (! slot.active)
+                             || (++impl->framesSincePalmRefresh >= kPalmRefreshInterval);
 
-        if (anySlotEmpty || periodicRefresh)
+        if (needsPalm)
         {
+            ranPalm = true;
             float bestPalmScore = 0.0f;
             auto detections = impl->runPalmDetector(frame, bestPalmScore);
             impl->framesSincePalmRefresh = 0;
             result.diagnostics.lastPalmScore   = bestPalmScore;
             result.diagnostics.palmRanThisFrame = true;
 
-            for (auto& det : detections)
+            if (! detections.empty())
             {
-                RoiTransform candidateRoi = impl->roiFromPalm(det);
+                // Single-hand: just take the highest-scoring detection
+                // (NMS already deduplicated within-frame palm overlaps).
+                const auto& best = detections[0];
 
-                // Skip if this detection refers to a hand that's already tracked.
-                // The previous IoU check on two differently-sized ROIs (palm 2.6x
-                // vs landmark 1.65x) failed to detect this case, leading to one
-                // physical hand filling both slots. Use a centre-inside check
-                // against the slot's tighter landmark-derived ROI instead.
-                const float candCx = 0.5f * (det.x1 + det.x2);
-                const float candCy = 0.5f * (det.y1 + det.y2);
-                bool overlapsExisting = false;
-                for (const auto& s : impl->slots)
+                if (slot.active)
                 {
-                    if (! s.active) continue;
-                    if (pointInsideRoi(candCx, candCy, s.roi))
+                    // Periodic refresh: only replace the cached track if the
+                    // new detection significantly disagrees with the cached
+                    // ROI's current centre - protects against the detector
+                    // briefly latching onto a face or noise.
+                    const float cx = 0.5f * (best.x1 + best.x2);
+                    const float cy = 0.5f * (best.y1 + best.y2);
+                    const float dx = cx - slot.roi.centerX;
+                    const float dy = cy - slot.roi.centerY;
+                    const float dist2 = dx * dx + dy * dy;
+                    const float roiHalf = slot.roi.size * 0.5f;
+                    if (dist2 > roiHalf * roiHalf)
                     {
-                        overlapsExisting = true;
-                        break;
+                        // The detector is finding something far from where we
+                        // were tracking - prefer the fresh detection.
+                        const RoiTransform candidateRoi = impl->roiFromPalm(best);
+                        const auto lr = impl->runHandLandmarks(frame, candidateRoi);
+                        if (lr.ok && lr.confidence >= kHandConfThresh)
+                        {
+                            slot.active         = true;
+                            slot.lastConfidence = lr.confidence;
+                            slot.handedness     = lr.handedness;
+                            slot.lastLandmarks  = lr.landmarks;
+                            slot.roi            = roiFromLandmarks(lr.landmarks);
+                            slot.lastBbox       = computeLandmarkBbox(lr.landmarks);
+                        }
                     }
                 }
-                if (overlapsExisting) continue;
-
-                // Find first empty slot.
-                int target = -1;
-                for (int i = 0; i < kMaxHands; ++i)
+                else
                 {
-                    if (! impl->slots[static_cast<size_t>(i)].active)
+                    // Empty slot - run landmark on the candidate to verify
+                    // before committing.
+                    const RoiTransform candidateRoi = impl->roiFromPalm(best);
+                    const auto lr = impl->runHandLandmarks(frame, candidateRoi);
+                    if (lr.ok && lr.confidence >= kHandConfThresh)
                     {
-                        target = i;
-                        break;
+                        slot.active         = true;
+                        slot.lastConfidence = lr.confidence;
+                        slot.handedness     = lr.handedness;
+                        slot.lastLandmarks  = lr.landmarks;
+                        slot.roi            = roiFromLandmarks(lr.landmarks);
+                        slot.lastBbox       = computeLandmarkBbox(lr.landmarks);
                     }
                 }
-                if (target < 0) break;
-
-                // Run landmark model on the new ROI to verify before committing.
-                auto lr = impl->runHandLandmarks(frame, candidateRoi);
-                if (! lr.ok || lr.confidence < kHandEnterThresh) continue;
-
-                auto& slot = impl->slots[static_cast<size_t>(target)];
-                slot.active         = true;
-                slot.lastConfidence = lr.confidence;
-                slot.handedness     = lr.handedness;
-                slot.lastLandmarks  = lr.landmarks;
-                slot.roi            = roiFromLandmarks(lr.landmarks);
             }
         }
 
@@ -516,28 +543,24 @@ namespace handcontrol::tracking
         const float frameW = static_cast<float>(frame.getWidth());
         const float frameH = static_cast<float>(frame.getHeight());
 
-        for (int i = 0; i < kMaxHands; ++i)
+        auto& outHand = result.hands[0];
+        outHand.present     = slot.active;
+        outHand.handedness  = slot.handedness;
+        outHand.confidence  = slot.lastConfidence;
+        for (int j = 0; j < kHandLandmarks; ++j)
         {
-            const auto& slot = impl->slots[static_cast<size_t>(i)];
-            auto& outHand = result.hands[static_cast<size_t>(i)];
-            outHand.present     = slot.active;
-            outHand.handedness  = slot.handedness;
-            outHand.confidence  = slot.lastConfidence;
-
-            // Normalise pixel-space landmarks to [0,1] for downstream consumers.
-            for (int j = 0; j < kHandLandmarks; ++j)
-            {
-                outHand.landmarks[static_cast<size_t>(j)].x =
-                    slot.lastLandmarks[static_cast<size_t>(j)].x / frameW;
-                outHand.landmarks[static_cast<size_t>(j)].y =
-                    slot.lastLandmarks[static_cast<size_t>(j)].y / frameH;
-            }
-
-            // ROIs stay in pixel coords; the preview converts to its display
-            // rectangle when drawing.
-            result.diagnostics.activeRois[static_cast<size_t>(i)] = slot.roi;
-            result.diagnostics.roiActive[static_cast<size_t>(i)]  = slot.active;
+            outHand.landmarks[static_cast<size_t>(j)].x =
+                slot.lastLandmarks[static_cast<size_t>(j)].x / frameW;
+            outHand.landmarks[static_cast<size_t>(j)].y =
+                slot.lastLandmarks[static_cast<size_t>(j)].y / frameH;
         }
+
+        result.diagnostics.activeRois[0] = slot.roi;
+        result.diagnostics.roiActive[0]  = slot.active;
+
+        // Surface "what path did we take this frame" so the status bar can
+        // show it. Useful when investigating tracking issues.
+        juce::ignoreUnused(ranLandmarkOnCachedRoi, ranPalm);
 
         return result;
     }

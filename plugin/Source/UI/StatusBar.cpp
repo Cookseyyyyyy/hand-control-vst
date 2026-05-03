@@ -21,29 +21,26 @@ namespace handcontrol::ui
         }
         else
         {
-            // Per-slot block: "H1 0.92" or "H1 lost (1.4s)" so users can see
-            // exactly when and why a meter has stopped moving.
-            juce::String text;
-            for (int slot = 0; slot < 2; ++slot)
+            const auto& d = snap.slotDiagnostics;
+
+            juce::String text = "Hand ";
+            if (d.active)
             {
-                const auto& d = snap.slotDiagnostics[static_cast<size_t>(slot)];
-                if (text.isNotEmpty()) text << "   ";
-                text << "H" << (slot + 1) << " ";
-                if (d.active)
-                {
-                    text << juce::String(d.lastConfidence, 2);
-                }
-                else if (d.lastSeenTime > 0.0)
-                {
-                    const double age = juce::jmax(0.0, snap.currentTime - d.lastSeenTime);
-                    text << "lost (" << juce::String(age, 1) << "s)";
-                }
-                else
-                {
-                    text << "-";
-                }
+                text << juce::String(d.lastConfidence, 2);
+            }
+            else if (d.lastSeenTime > 0.0)
+            {
+                const double age = juce::jmax(0.0, snap.currentTime - d.lastSeenTime);
+                text << "lost (" << juce::String(age, 1) << "s)";
+            }
+            else
+            {
+                text << "-";
             }
             text << "    Palm " << juce::String(snap.result.diagnostics.lastPalmScore, 2);
+            text << "    " << (snap.result.diagnostics.palmRanThisFrame
+                                   ? juce::String("[palm]")
+                                   : juce::String("[cached]"));
 
             currentText = text;
         }

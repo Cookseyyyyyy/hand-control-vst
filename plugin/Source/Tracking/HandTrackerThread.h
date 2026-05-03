@@ -1,7 +1,6 @@
 #pragma once
 
 #include "CameraSource.h"
-#include "HandIdentityTracker.h"
 #include "IHandTracker.h"
 #include "Normalizer.h"
 #include "OneEuroFilter.h"
@@ -22,12 +21,11 @@ namespace handcontrol::tracking
         Lifecycle:
           - The thread pulls the latest frame from `CameraSource`,
           - Runs `IHandTracker::process()` on it,
-          - Stabilises hand identity with `HandIdentityTracker`,
-          - Smooths each landmark x/y via `OneEuroFilter` (per-landmark, not per-output),
+          - Smooths each landmark x/y via `OneEuroFilter`,
           - Computes `HandMeasurements` via `measure()`,
           - Publishes the values into `ParameterBridge`.
 
-        Also exposes a snapshot of the latest result for the UI thread. */
+        Single-hand tracking only as of v0.4. */
     class HandTrackerThread : private juce::Thread
     {
     public:
@@ -38,7 +36,6 @@ namespace handcontrol::tracking
         std::optional<std::string> start(int cameraIndex);
         void stop();
 
-        /** Per-slot diagnostic data, surfaced to the UI for the status bar. */
         struct SlotDiagnostics
         {
             float lastConfidence { 0.0f };
@@ -46,20 +43,17 @@ namespace handcontrol::tracking
             bool active          { false };
         };
 
-        /** Safe from any thread. Used by the UI to draw the preview. */
         struct UISnapshot
         {
             juce::Image frame;
             TrackingResult result;
-            HandIdentityTracker::Assignment assignment;
             bool trackerHealthy { false };
             std::string statusMessage;
-            std::array<SlotDiagnostics, 2> slotDiagnostics {};
+            SlotDiagnostics slotDiagnostics {};
             double currentTime { 0.0 };
         };
         UISnapshot latestSnapshotForUI() const;
 
-        /** Smoothing 0..1. Mapped to One-Euro `minCutoffHz`. */
         void setSmoothing(float value01) noexcept;
         void setHoldOnLost(bool shouldHold) noexcept;
         void setBypass(bool shouldBypass) noexcept;
@@ -68,33 +62,31 @@ namespace handcontrol::tracking
     private:
         void run() override;
         void processOnce(const juce::Image& frame, double timestampSeconds);
-        void publishMeasurements(int slotIndex, const handcontrol::params::MeasurementId firstId,
-                                  float v0, float v1, float v2, float v3,
-                                  float vHandX, float vHandY, float vOpenness);
-        void publishLost(int slotIndex);
+        void publishMeasurements(const HandMeasurements& m);
+        void publishLost();
         void updateFilterConfig() noexcept;
 
         handcontrol::params::ParameterBridge& bridge;
         std::unique_ptr<IHandTracker> tracker;
         CameraSource camera;
-        HandIdentityTracker identity;
 
-        // 21 landmarks * 2 axes = 42 filters per slot. We smooth at the source
-        // so all derived measurements (distances, angles, openness, position)
-        // benefit equally.
+        // 21 landmarks * 2 axes = 42 filters. Smoothing applied at the source
+        // so all derived measurements benefit equally.
         struct LandmarkFilters
         {
             std::array<OneEuroFilter, numLandmarks> x {};
             std::array<OneEuroFilter, numLandmarks> y {};
         };
-        std::array<LandmarkFilters, 2> landmarkFilters;
+        LandmarkFilters landmarkFilters;
 
-        std::array<SlotDiagnostics, 2> slotDiagnostics {};
+        SlotDiagnostics slotDiagnostics {};
 
         mutable std::mutex snapshotMutex;
         UISnapshot uiSnapshot;
 
-        std::atomic<float> smoothing01 { 0.35f };
+        // Default smoothing now 0 (very light) to avoid the perceived lag we
+        // had at v0.3's 0.35 default. Users can dial in heavier filtering.
+        std::atomic<float> smoothing01 { 0.0f };
         std::atomic<bool> holdOnLost { true };
         std::atomic<bool> bypassed { false };
     };

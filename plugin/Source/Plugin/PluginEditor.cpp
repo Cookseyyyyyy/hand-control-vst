@@ -22,8 +22,8 @@ namespace handcontrol
     {
         setLookAndFeel(&theme);
         setResizable(true, true);
-        setResizeLimits(880, 620, 1800, 1300);
-        setSize(980, 760);
+        setResizeLimits(820, 540, 1800, 1300);
+        setSize(900, 660);
 
         buildControls();
         processor.restartTracker();
@@ -50,25 +50,14 @@ namespace handcontrol
             handcontrol::params::MeasurementId id;
             juce::Colour accent;
         };
-
-        // Layout: 2 rows (per hand) x 7 columns. Original 4 + 3 new per hand.
-        const std::array<MeterSpec, 14> specs {{
-            // Row 1: Hand 1
-            { "H1 Thumb-Index Dist",  params::MeasurementId::hand1ThumbIndexDistance, ui::colours::accentIndex },
-            { "H1 Thumb-Index Angle", params::MeasurementId::hand1ThumbIndexAngle,    ui::colours::accentIndex },
-            { "H1 Thumb-Pinky Dist",  params::MeasurementId::hand1ThumbPinkyDistance, ui::colours::accentPinky },
-            { "H1 Thumb-Pinky Angle", params::MeasurementId::hand1ThumbPinkyAngle,    ui::colours::accentPinky },
-            { "H1 Hand X",            params::MeasurementId::hand1HandX,              ui::colours::accentHand1 },
-            { "H1 Hand Y",            params::MeasurementId::hand1HandY,              ui::colours::accentHand1 },
-            { "H1 Openness",          params::MeasurementId::hand1Openness,           ui::colours::accentHand1 },
-            // Row 2: Hand 2
-            { "H2 Thumb-Index Dist",  params::MeasurementId::hand2ThumbIndexDistance, ui::colours::accentIndex },
-            { "H2 Thumb-Index Angle", params::MeasurementId::hand2ThumbIndexAngle,    ui::colours::accentIndex },
-            { "H2 Thumb-Pinky Dist",  params::MeasurementId::hand2ThumbPinkyDistance, ui::colours::accentPinky },
-            { "H2 Thumb-Pinky Angle", params::MeasurementId::hand2ThumbPinkyAngle,    ui::colours::accentPinky },
-            { "H2 Hand X",            params::MeasurementId::hand2HandX,              ui::colours::accentHand2 },
-            { "H2 Hand Y",            params::MeasurementId::hand2HandY,              ui::colours::accentHand2 },
-            { "H2 Openness",          params::MeasurementId::hand2Openness,           ui::colours::accentHand2 }
+        const std::array<MeterSpec, handcontrol::params::numMeasurements> specs {{
+            { "Thumb-Index Dist",  params::MeasurementId::thumbIndexDistance, ui::colours::accentIndex },
+            { "Thumb-Index Angle", params::MeasurementId::thumbIndexAngle,    ui::colours::accentIndex },
+            { "Thumb-Pinky Dist",  params::MeasurementId::thumbPinkyDistance, ui::colours::accentPinky },
+            { "Thumb-Pinky Angle", params::MeasurementId::thumbPinkyAngle,    ui::colours::accentPinky },
+            { "Hand X",            params::MeasurementId::handX,              ui::colours::accentHand1 },
+            { "Hand Y",            params::MeasurementId::handY,              ui::colours::accentHand1 },
+            { "Openness",          params::MeasurementId::openness,           ui::colours::accentHand1 }
         }};
         for (const auto& spec : specs)
         {
@@ -102,7 +91,6 @@ namespace handcontrol
         {
             midiMapVisible = midiMapButton.getToggleState();
             midiMapPanel.setVisible(midiMapVisible);
-            // Hide the meter grid when the panel is up - they share the same area.
             for (auto& m : meters) m->setVisible(! midiMapVisible);
             resized();
         };
@@ -134,7 +122,6 @@ namespace handcontrol
         {
             preview.setShowRoi(roiToggle.getToggleState());
         };
-        // Initial sync from current parameter value.
         preview.setShowRoi(roiToggle.getToggleState());
     }
 
@@ -173,7 +160,6 @@ namespace handcontrol
         statusBar.setBounds(statusRow);
         bounds.removeFromBottom(6);
 
-        // Two rows of controls: top has camera + toggles, bottom has smoothing.
         auto controls2 = bounds.removeFromBottom(32);
         smoothingLabel.setBounds(controls2.removeFromLeft(80));
         smoothingSlider.setBounds(controls2.reduced(4, 6));
@@ -192,10 +178,10 @@ namespace handcontrol
         bounds.removeFromBottom(8);
 
         const bool showPreview = previewToggle.getToggleState();
-        // 2 rows of 7 meters; allow more vertical space for them.
-        // The MIDI map panel takes the same area when toggled.
+        // Single row of 7 meters (was 2x7 in v0.3).
+        // Bottom area is smaller now since we only need one row.
         auto bottomArea = showPreview
-            ? bounds.removeFromBottom(juce::jmax(170, bounds.getHeight() * 2 / 5))
+            ? bounds.removeFromBottom(juce::jmax(110, bounds.getHeight() / 4))
             : bounds;
 
         if (showPreview)
@@ -211,21 +197,16 @@ namespace handcontrol
         }
         else
         {
-            const int rows = 2;
-            const int cols = 7;
+            const int cols = handcontrol::params::numMeasurements;
             const int cellW = bottomArea.getWidth() / cols;
-            const int cellH = bottomArea.getHeight() / rows;
-            for (int r = 0; r < rows; ++r)
+            for (int c = 0; c < cols; ++c)
             {
-                for (int c = 0; c < cols; ++c)
-                {
-                    const auto idx = static_cast<size_t>(r * cols + c);
-                    if (idx < meters.size())
-                        meters[idx]->setBounds(bottomArea.getX() + c * cellW,
-                                               bottomArea.getY() + r * cellH,
-                                               cellW - 4,
-                                               cellH - 4);
-                }
+                const auto idx = static_cast<size_t>(c);
+                if (idx < meters.size())
+                    meters[idx]->setBounds(bottomArea.getX() + c * cellW,
+                                           bottomArea.getY(),
+                                           cellW - 4,
+                                           bottomArea.getHeight() - 4);
             }
         }
     }

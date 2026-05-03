@@ -1,12 +1,10 @@
 add_executable(HandControlTests
     NormalizerTests.cpp
     OneEuroFilterTests.cpp
-    HandIdentityTrackerTests.cpp
     RoiTests.cpp
     MidiCcSenderTests.cpp
     ${CMAKE_SOURCE_DIR}/plugin/Source/Tracking/Normalizer.cpp
     ${CMAKE_SOURCE_DIR}/plugin/Source/Tracking/OneEuroFilter.cpp
-    ${CMAKE_SOURCE_DIR}/plugin/Source/Tracking/HandIdentityTracker.cpp
     ${CMAKE_SOURCE_DIR}/plugin/Source/Tracking/Roi.cpp
     ${CMAKE_SOURCE_DIR}/plugin/Source/Midi/MidiCcSender.cpp)
 

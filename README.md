@@ -1,20 +1,23 @@
 # Hand Control VST
 
-A webcam-driven VST3 / AU plugin that turns hand gestures into 14
-DAW-mappable parameters and 14 MIDI CC messages. Spiritual successor to
+A webcam-driven VST3 / AU plugin that turns hand gestures into 7
+DAW-mappable parameters and 7 MIDI CC messages. Spiritual successor to
 the original [OSCHandcontrol](https://github.com/) Python script, rebuilt
 as a self-contained plugin that installs in one double-click and maps in
 any DAW via standard MIDI Map mode.
 
 - **Inputs**: any USB or built-in webcam.
-- **Outputs (14 measurements per hand pair)**:
-  - `H1_ThumbIndex_Distance`, `H1_ThumbIndex_Angle`
-  - `H1_ThumbPinky_Distance`, `H1_ThumbPinky_Angle`
-  - `H1_HandX`, `H1_HandY`, `H1_Openness`
-  - `H2_*` (same seven for the second hand)
-  - Each value also emitted as MIDI CC (default CC 20-33 on channel 1, configurable in the plugin).
+- **Outputs (7 measurements, single-hand tracking)**:
+  - `Thumb-Index Distance`, `Thumb-Index Angle`
+  - `Thumb-Pinky Distance`, `Thumb-Pinky Angle`
+  - `Hand X`, `Hand Y`, `Openness`
+  - Each value also emitted as MIDI CC (default CC 20-26 on channel 1, configurable in the plugin).
 - **Platforms**: macOS (Apple Silicon + Intel) and Windows x64.
 - **Formats**: VST3, AU, Standalone.
+
+> v0.4 deliberately tracks one hand at a time. v0.2-v0.3 supported two
+> hands but a single physical hand often filled both slots, and the extra
+> complexity made tracking less reliable overall. Single-hand is more solid.
 
 ## Installing (end users)
 

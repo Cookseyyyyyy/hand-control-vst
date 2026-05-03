@@ -16,12 +16,9 @@ namespace handcontrol::ui
         constexpr int kColEnabledWidth  = 70;
 
         const std::array<juce::String, handcontrol::params::numMeasurements> kRowLabels {
-            "H1 Thumb-Index Distance", "H1 Thumb-Index Angle",
-            "H1 Thumb-Pinky Distance", "H1 Thumb-Pinky Angle",
-            "H2 Thumb-Index Distance", "H2 Thumb-Index Angle",
-            "H2 Thumb-Pinky Distance", "H2 Thumb-Pinky Angle",
-            "H1 Hand X", "H1 Hand Y", "H1 Openness",
-            "H2 Hand X", "H2 Hand Y", "H2 Openness"
+            "Thumb-Index Distance", "Thumb-Index Angle",
+            "Thumb-Pinky Distance", "Thumb-Pinky Angle",
+            "Hand X", "Hand Y", "Openness"
         };
     }
 

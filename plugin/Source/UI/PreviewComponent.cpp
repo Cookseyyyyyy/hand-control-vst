@@ -79,33 +79,16 @@ namespace handcontrol::ui
             return;
         }
 
-        // Optional ROI overlay (per slot, in the slot's accent colour).
-        if (showRoi)
+        // Single-hand only (v0.4): just slot 0.
+        if (showRoi && snapshot.result.diagnostics.roiActive[0])
         {
-            for (int slot = 0; slot < 2; ++slot)
-            {
-                if (! snapshot.result.diagnostics.roiActive[static_cast<size_t>(slot)])
-                    continue;
-                drawRoi(g, snapshot.result.diagnostics.activeRois[static_cast<size_t>(slot)],
-                        frameRect,
-                        slot == 0 ? colours::accentHand1 : colours::accentHand2);
-            }
+            drawRoi(g, snapshot.result.diagnostics.activeRois[0],
+                    frameRect, colours::accentHand1);
         }
 
-        // Hand skeletons.
-        for (int slot = 0; slot < 2; ++slot)
-        {
-            const auto maybeIdx = snapshot.assignment.slotToInputIndex[static_cast<size_t>(slot)];
-            if (! maybeIdx.has_value())
-                continue;
-            const auto& hand = snapshot.result.hands[static_cast<size_t>(*maybeIdx)];
-            if (! hand.present)
-                continue;
-
-            drawLandmarks(g, hand, frameRect,
-                          slot == 0 ? colours::accentHand1 : colours::accentHand2,
-                          slot == 0 ? "H1" : "H2");
-        }
+        const auto& hand = snapshot.result.hands[0];
+        if (hand.present)
+            drawLandmarks(g, hand, frameRect, colours::accentHand1, "Hand");
     }
 
     void PreviewComponent::drawLandmarks(juce::Graphics& g,

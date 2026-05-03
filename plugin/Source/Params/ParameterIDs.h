@@ -7,24 +7,18 @@
 
 namespace handcontrol::params
 {
-    // ---- Original Python-port measurements (v0.1) ---------------------------
+    // ---- Single-hand measurement parameters (v0.4) -------------------------
+    // We dropped two-hand support in v0.4: tracking quality of a single
+    // hand is now the focus. The parameter IDs keep the "h1_" prefix so
+    // existing v0.3 mappings to the H1_* params still resolve.
     inline constexpr std::string_view h1ThumbIndexDistance = "h1_thumbIndex_distance";
     inline constexpr std::string_view h1ThumbIndexAngle    = "h1_thumbIndex_angle";
     inline constexpr std::string_view h1ThumbPinkyDistance = "h1_thumbPinky_distance";
     inline constexpr std::string_view h1ThumbPinkyAngle    = "h1_thumbPinky_angle";
 
-    inline constexpr std::string_view h2ThumbIndexDistance = "h2_thumbIndex_distance";
-    inline constexpr std::string_view h2ThumbIndexAngle    = "h2_thumbIndex_angle";
-    inline constexpr std::string_view h2ThumbPinkyDistance = "h2_thumbPinky_distance";
-    inline constexpr std::string_view h2ThumbPinkyAngle    = "h2_thumbPinky_angle";
-
-    // ---- New per-hand measurements (v0.2) -----------------------------------
     inline constexpr std::string_view h1HandX     = "h1_handX";
     inline constexpr std::string_view h1HandY     = "h1_handY";
     inline constexpr std::string_view h1Openness  = "h1_openness";
-    inline constexpr std::string_view h2HandX     = "h2_handX";
-    inline constexpr std::string_view h2HandY     = "h2_handY";
-    inline constexpr std::string_view h2Openness  = "h2_openness";
 
     // ---- Utility (not "mappable") -------------------------------------------
     inline constexpr std::string_view cameraIndex     = "cameraIndex";
@@ -35,51 +29,35 @@ namespace handcontrol::params
     inline constexpr std::string_view mirrorCamera    = "mirrorCamera";
     inline constexpr std::string_view roiOverlay      = "roiOverlay";
 
-    /** Stable indices for the measurement parameters. The ORIGINAL EIGHT are
-        kept at their v0.1 positions so existing user mappings still work. New
-        v0.2 measurements are appended. */
+    /** Stable indices for the measurement parameters. */
     enum class MeasurementId : int
     {
-        // v0.1 - do not reorder
-        hand1ThumbIndexDistance = 0,
-        hand1ThumbIndexAngle,
-        hand1ThumbPinkyDistance,
-        hand1ThumbPinkyAngle,
-        hand2ThumbIndexDistance,
-        hand2ThumbIndexAngle,
-        hand2ThumbPinkyDistance,
-        hand2ThumbPinkyAngle,
-
-        // v0.2 - append-only
-        hand1HandX,
-        hand1HandY,
-        hand1Openness,
-        hand2HandX,
-        hand2HandY,
-        hand2Openness,
-
+        thumbIndexDistance = 0,
+        thumbIndexAngle,
+        thumbPinkyDistance,
+        thumbPinkyAngle,
+        handX,
+        handY,
+        openness,
         count
     };
 
     inline constexpr int numMeasurements = static_cast<int>(MeasurementId::count);
-    static_assert(numMeasurements == 14, "14 measurement parameters expected");
+    static_assert(numMeasurements == 7, "7 measurement parameters expected");
 
     inline constexpr std::array<std::string_view, numMeasurements> measurementIds {
         h1ThumbIndexDistance, h1ThumbIndexAngle,
         h1ThumbPinkyDistance, h1ThumbPinkyAngle,
-        h2ThumbIndexDistance, h2ThumbIndexAngle,
-        h2ThumbPinkyDistance, h2ThumbPinkyAngle,
-        h1HandX, h1HandY, h1Openness,
-        h2HandX, h2HandY, h2Openness
+        h1HandX, h1HandY, h1Openness
     };
 
-    // ---- Per-measurement MIDI CC config (v0.3, non-automatable) -------------
-    //
-    // Three parameters per measurement: channel (1..16), CC number (0..127),
-    // and an enabled toggle. Stored in APVTS so they persist with the project.
-    // None are exposed for DAW automation (withAutomatable(false)) so they
-    // don't pollute the host's parameter list - they're only meant to be
-    // edited from the plugin's MIDI Map panel.
+    inline constexpr std::array<std::string_view, numMeasurements> measurementDisplayNames {
+        "Thumb-Index Distance", "Thumb-Index Angle",
+        "Thumb-Pinky Distance", "Thumb-Pinky Angle",
+        "Hand X", "Hand Y", "Openness"
+    };
+
+    // ---- Per-measurement MIDI CC config (non-automatable) ------------------
     inline juce::String midiChannelId(MeasurementId id)
     {
         const auto base = measurementIds[static_cast<size_t>(id)];
@@ -96,9 +74,8 @@ namespace handcontrol::params
         return juce::String(base.data(), base.size()) + "_midi_en";
     }
 
-    // Default CC numbers: 20..33 (the MIDI spec leaves these undefined, so
-    // they're safe to use without colliding with standard CCs like volume,
-    // pan, modulation etc.). All start on channel 1 with sending enabled.
+    // Default CC numbers: 20..26. CCs 20-31 are undefined per the MIDI spec
+    // so they're safe targets that won't collide with standard CCs.
     inline constexpr int defaultMidiCcBase = 20;
     inline constexpr int defaultMidiChannel = 1;
 }

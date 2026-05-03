@@ -18,6 +18,36 @@ namespace handcontrol::tracking
         return std::abs(lx) <= half && std::abs(ly) <= half;
     }
 
+    float bboxIou(float ax1, float ay1, float ax2, float ay2,
+                  float bx1, float by1, float bx2, float by2) noexcept
+    {
+        const float ix1 = std::max(ax1, bx1);
+        const float iy1 = std::max(ay1, by1);
+        const float ix2 = std::min(ax2, bx2);
+        const float iy2 = std::min(ay2, by2);
+        const float iw = std::max(0.0f, ix2 - ix1);
+        const float ih = std::max(0.0f, iy2 - iy1);
+        const float inter = iw * ih;
+        const float aArea = std::max(0.0f, ax2 - ax1) * std::max(0.0f, ay2 - ay1);
+        const float bArea = std::max(0.0f, bx2 - bx1) * std::max(0.0f, by2 - by1);
+        const float un = aArea + bArea - inter;
+        return un > 0.0f ? inter / un : 0.0f;
+    }
+
+    LandmarkBbox computeLandmarkBbox(const std::array<Point2D, numLandmarks>& lm) noexcept
+    {
+        LandmarkBbox b;
+        b.x1 = b.y1 =  std::numeric_limits<float>::infinity();
+        b.x2 = b.y2 = -std::numeric_limits<float>::infinity();
+        for (const auto& p : lm)
+        {
+            b.x1 = std::min(b.x1, p.x); b.x2 = std::max(b.x2, p.x);
+            b.y1 = std::min(b.y1, p.y); b.y2 = std::max(b.y2, p.y);
+        }
+        b.valid = std::isfinite(b.x1) && std::isfinite(b.y2);
+        return b;
+    }
+
     RoiTransform roiFromLandmarks(const std::array<Point2D, numLandmarks>& lm) noexcept
     {
         RoiTransform roi;

@@ -25,4 +25,13 @@ namespace handcontrol::tracking
         to a hand that's already being tracked, robust to size / rotation
         differences between palm-derived and landmark-derived ROIs. */
     bool pointInsideRoi(float cx, float cy, const RoiTransform& roi) noexcept;
+
+    /** Axis-aligned IoU between two boxes, given as min/max corners. */
+    float bboxIou(float ax1, float ay1, float ax2, float ay2,
+                  float bx1, float by1, float bx2, float by2) noexcept;
+
+    /** Axis-aligned bounding box of all 21 hand landmarks, used by the
+        tracker for inter-frame IoU tracking confidence. */
+    struct LandmarkBbox { float x1, y1, x2, y2; bool valid; };
+    LandmarkBbox computeLandmarkBbox(const std::array<Point2D, numLandmarks>& lm) noexcept;
 }
