@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Landmarks.h"
+
 #include <juce_graphics/juce_graphics.h>
 
 #include <vector>
@@ -21,20 +23,12 @@ namespace handcontrol::tracking
                            int& outPadBiasX,
                            int& outPadBiasY);
 
-    /** Crop, rotate, and pad a region of interest around a palm detection,
+    /** Crop, rotate, and pad a region of interest around a hand,
         then resize to the target square and normalise into a float NHWC RGB
         tensor 0..1, ready for the hand landmark model.
 
-        Returns the inverse affine transform mapping model-space pixel
-        coordinates back to the original image. */
-    struct RoiTransform
-    {
-        float centerX;       // ROI centre in original image coords
-        float centerY;
-        float size;          // ROI side length in original image pixels
-        float rotationRad;   // rotation of ROI in the original image
-    };
-
+        `RoiTransform` is defined in Landmarks.h and shared with the rest of the
+        tracker so the same struct can be used for diagnostics + overlay. */
     void cropRotateResizeToTensor(const juce::Image& src,
                                   const RoiTransform& roi,
                                   int target,

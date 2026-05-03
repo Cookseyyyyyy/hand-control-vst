@@ -2,30 +2,51 @@
 
 #include "ImagePreprocess.h"
 #include "PalmAnchors.h"
+#include "Roi.h"
 
 #include <HandControlModels.h>
 
+// Without ORT_API_MANUAL_INIT, onnxruntime_cxx_api.h initialises a global API
+// pointer by calling OrtGetApiBase() during DLL load. That defeats Windows
+// delay-loading: Ableton's scanner LoadLibrarys the VST3, the static init
+// immediately tries to resolve onnxruntime.dll, and the plugin is rejected
+// before our delay-load hook can resolve the runtime from the bundle.
+//
+// Manual init keeps plugin loading side-effect free. We call Ort::InitApi()
+// explicitly in initialise(), after the DLL is actually needed.
+#define ORT_API_MANUAL_INIT
 #include <onnxruntime_cxx_api.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <string>
 #include <vector>
 
 namespace handcontrol::tracking
 {
+    #ifdef _WIN32
+    extern "C" const OrtApiBase* handcontrolLoadOrtApiBaseFromPluginDir();
+    #endif
+
     namespace
     {
         constexpr int kPalmInputSize     = 192;
         constexpr int kHandInputSize     = 224;
-        constexpr float kPalmScoreThresh = 0.5f;
+        constexpr float kPalmScoreThresh = 0.4f;   // lowered: palm rarely runs now
         constexpr float kPalmNmsIou      = 0.3f;
-        constexpr float kHandConfThresh  = 0.55f;
+        constexpr float kHandEnterThresh = 0.55f;  // confidence needed to fill a slot
+        constexpr float kHandExitThresh  = 0.4f;   // confidence below which a slot is dropped
+        constexpr float kSlotOverlapIou  = 0.5f;   // skip new detection if it overlaps an existing slot
         constexpr int   kMaxHands        = 2;
         constexpr int   kPalmLandmarks   = 7;
         constexpr int   kHandLandmarks   = 21;
         constexpr int   kPalmOutputDim   = 4 + kPalmLandmarks * 2;   // 18
+
+        // Re-run the palm detector occasionally even when slots are full, so we can
+        // pick up a new hand entering the frame.
+        constexpr int   kPalmRefreshInterval = 30;  // frames
 
         struct PalmDetection
         {
@@ -70,6 +91,23 @@ namespace handcontrol::tracking
             }
             return out;
         }
+
+        // Axis-aligned IoU between two ROIs, used for "is this new palm detection
+        // already covered by a tracked slot".
+        float roiIou(const RoiTransform& a, const RoiTransform& b) noexcept
+        {
+            const float aHalf = a.size * 0.5f;
+            const float bHalf = b.size * 0.5f;
+            const float ix1 = std::max(a.centerX - aHalf, b.centerX - bHalf);
+            const float iy1 = std::max(a.centerY - aHalf, b.centerY - bHalf);
+            const float ix2 = std::min(a.centerX + aHalf, b.centerX + bHalf);
+            const float iy2 = std::min(a.centerY + aHalf, b.centerY + bHalf);
+            const float iw = std::max(0.0f, ix2 - ix1);
+            const float ih = std::max(0.0f, iy2 - iy1);
+            const float inter = iw * ih;
+            const float un = a.size * a.size + b.size * b.size - inter;
+            return un > 0.0f ? inter / un : 0.0f;
+        }
     }
 
     struct OnnxHandTracker::Impl
@@ -82,11 +120,10 @@ namespace handcontrol::tracking
         Ort::AllocatorWithDefaultOptions allocator;
         Ort::MemoryInfo memInfo { Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault) };
 
-        // Names are heap-allocated by ORT; we copy them into std::string for lifetime.
         std::string palmInputName;
         std::vector<std::string> palmOutputNames;
-        int palmDeltaOutputIdx { 0 };  // output with last dim == 18
-        int palmScoreOutputIdx { 1 };  // output with last dim == 1
+        int palmDeltaOutputIdx { 0 };
+        int palmScoreOutputIdx { 1 };
 
         std::string handInputName;
         std::vector<std::string> handOutputNames;
@@ -95,16 +132,22 @@ namespace handcontrol::tracking
         int handednessIdx    { 2 };
 
         std::vector<Anchor> anchors;
-        std::vector<float> palmTensorBuf;  // reused frame buffer
+        std::vector<float> palmTensorBuf;
         std::vector<float> handTensorBuf;
 
-        // State for temporal ROI reuse (one per hand).
-        struct RoiState
+        // Per-slot tracking state. When a slot is active we keep its ROI
+        // and reuse it next frame, skipping the palm detector entirely.
+        struct TrackingSlot
         {
-            bool valid { false };
-            RoiTransform roi {};
+            bool   active        { false };
+            RoiTransform roi     {};
+            float  lastConfidence { 0.0f };
+            Handedness handedness { Handedness::unknown };
+            std::array<Point2D, kHandLandmarks> lastLandmarks {};
         };
-        std::array<RoiState, kMaxHands> lastRoi {};
+        std::array<TrackingSlot, kMaxHands> slots {};
+
+        int framesSincePalmRefresh { kPalmRefreshInterval };  // run on first frame
 
         Impl()
         {
@@ -144,7 +187,6 @@ namespace handcontrol::tracking
 
         void queryModelIO()
         {
-            // Palm
             {
                 auto in0 = palmSession->GetInputNameAllocated(0, allocator);
                 palmInputName = in0.get();
@@ -165,8 +207,6 @@ namespace handcontrol::tracking
                         palmScoreOutputIdx = static_cast<int>(i);
                 }
             }
-
-            // Hand
             {
                 auto in0 = handSession->GetInputNameAllocated(0, allocator);
                 handInputName = in0.get();
@@ -202,8 +242,10 @@ namespace handcontrol::tracking
             }
         }
 
-        std::vector<PalmDetection> runPalmDetector(const juce::Image& frame)
+        std::vector<PalmDetection> runPalmDetector(const juce::Image& frame, float& outBestScore)
         {
+            outBestScore = 0.0f;
+
             int padX = 0, padY = 0;
             letterboxToTensor(frame, kPalmInputSize, palmTensorBuf, padX, padY);
 
@@ -237,13 +279,14 @@ namespace handcontrol::tracking
 
             const int imgW = frame.getWidth();
             const int imgH = frame.getHeight();
-            const int scale = std::max(imgW, imgH);  // letterbox projects back to the larger side
+            const int scale = std::max(imgW, imgH);
 
             std::vector<PalmDetection> raw;
             raw.reserve(64);
             for (int i = 0; i < kNumPalmAnchors; ++i)
             {
                 const float s = sigmoid(scores[i]);
+                if (s > outBestScore) outBestScore = s;
                 if (s < kPalmScoreThresh) continue;
 
                 const float* d = deltas + i * kPalmOutputDim;
@@ -271,39 +314,36 @@ namespace handcontrol::tracking
                 }
                 raw.push_back(det);
             }
-            auto kept = nms(std::move(raw), kPalmNmsIou);
-            if (kept.size() > kMaxHands) kept.resize(kMaxHands);
-            return kept;
+            return nms(std::move(raw), kPalmNmsIou);
         }
 
         RoiTransform roiFromPalm(const PalmDetection& det) const
         {
             RoiTransform roi;
-            // Palm landmark indices: 0 = wrist / palm base, 2 = middle finger base.
             const auto& p1 = det.landmarks[0];
             const auto& p2 = det.landmarks[2];
             const float dx = p2.x - p1.x;
             const float dy = p2.y - p1.y;
-            roi.rotationRad = std::atan2(dx, -dy);  // matches mp_handpose.py
+            roi.rotationRad = std::atan2(dx, -dy);
 
             const float bboxW = std::max(1.0f, det.x2 - det.x1);
             const float bboxH = std::max(1.0f, det.y2 - det.y1);
             const float bboxCx = 0.5f * (det.x1 + det.x2);
             const float bboxCy = 0.5f * (det.y1 + det.y2);
 
-            // Combined enlarge / shift approximating MediaPipe's two-pass transform.
-            // Empirical: ~2.6x the palm bbox side, centre shifted slightly toward
-            // the fingers along the hand's own y-axis.
+            // Combined enlarge / shift approximating MediaPipe's two-pass transform
+            // for the *first* ROI from a palm detection. After the first frame we
+            // switch to roiFromLandmarks, which is much tighter.
             const float side = std::max(bboxW, bboxH) * 2.6f;
             const float shiftLocal = -0.2f * side;
 
-            roi.size = side;
+            roi.size    = side;
             roi.centerX = bboxCx + std::sin(roi.rotationRad) * shiftLocal;
             roi.centerY = bboxCy - std::cos(roi.rotationRad) * shiftLocal;
             return roi;
         }
 
-        struct HandResult
+        struct LandmarkResult
         {
             bool ok { false };
             float confidence { 0.0f };
@@ -311,9 +351,11 @@ namespace handcontrol::tracking
             std::array<Point2D, kHandLandmarks> landmarks {};
         };
 
-        HandResult runHandLandmarks(const juce::Image& frame, const RoiTransform& roi)
+        // Returns landmarks in *pixel* coords of the source frame. Normalisation
+        // to [0,1] for downstream consumers happens later in process().
+        LandmarkResult runHandLandmarks(const juce::Image& frame, const RoiTransform& roi)
         {
-            HandResult out;
+            LandmarkResult out;
             cropRotateResizeToTensor(frame, roi, kHandInputSize, handTensorBuf);
 
             std::array<int64_t, 4> shape { 1, kHandInputSize, kHandInputSize, 3 };
@@ -345,11 +387,9 @@ namespace handcontrol::tracking
             const float  confRaw = *outputs[static_cast<size_t>(handConfIdx)].GetTensorData<float>();
             const float  handRaw = *outputs[static_cast<size_t>(handednessIdx)].GetTensorData<float>();
 
-            // Conf is in [0, 1] already; handedness is typically 0..1 where
-            // > 0.5 = right hand.
             const float conf = (confRaw >= 0.0f && confRaw <= 1.0f) ? confRaw : sigmoid(confRaw);
-            if (conf < kHandConfThresh)
-                return out;
+            out.confidence = conf;
+            out.handedness = (handRaw > 0.5f) ? Handedness::right : Handedness::left;
 
             const float handSide = static_cast<float>(kHandInputSize);
             const float cosR = std::cos(roi.rotationRad);
@@ -357,35 +397,46 @@ namespace handcontrol::tracking
 
             for (int i = 0; i < kHandLandmarks; ++i)
             {
-                // Model emits landmarks in [0, kHandInputSize] pixel space.
                 const float lx = lmRaw[i * 3 + 0];
                 const float ly = lmRaw[i * 3 + 1];
-                // Map to ROI-local [-0.5, 0.5] then scale by ROI size, then rotate + translate.
                 const float nx = (lx / handSide - 0.5f) * roi.size;
                 const float ny = (ly / handSide - 0.5f) * roi.size;
                 const float srcX = roi.centerX + (nx * cosR - ny * sinR);
                 const float srcY = roi.centerY + (nx * sinR + ny * cosR);
 
-                out.landmarks[static_cast<size_t>(i)].x = srcX / static_cast<float>(frame.getWidth());
-                out.landmarks[static_cast<size_t>(i)].y = srcY / static_cast<float>(frame.getHeight());
+                // Pixel coords - we will normalise when emitting the public result.
+                out.landmarks[static_cast<size_t>(i)].x = srcX;
+                out.landmarks[static_cast<size_t>(i)].y = srcY;
             }
-
-            out.confidence = conf;
-            out.handedness = (handRaw > 0.5f) ? Handedness::right : Handedness::left;
             out.ok = true;
             return out;
         }
+
     };
 
-    OnnxHandTracker::OnnxHandTracker() : impl(std::make_unique<Impl>()) {}
+    OnnxHandTracker::OnnxHandTracker() = default;
     OnnxHandTracker::~OnnxHandTracker() = default;
 
     std::optional<std::string> OnnxHandTracker::initialise()
     {
+        #ifdef _WIN32
+        const auto* apiBase = handcontrolLoadOrtApiBaseFromPluginDir();
+        if (apiBase == nullptr)
+            return std::string("Failed to load bundled onnxruntime.dll from the plugin directory.");
+        Ort::InitApi(apiBase->GetApi(ORT_API_VERSION));
+        #else
+        Ort::InitApi();
+        #endif
+
+        if (impl == nullptr)
+            impl = std::make_unique<Impl>();
+
         if (auto err = impl->loadModels())
             return err;
         impl->queryModelIO();
         impl->anchors = buildPalmAnchors();
+        for (auto& s : impl->slots) s.active = false;
+        impl->framesSincePalmRefresh = kPalmRefreshInterval;
         return std::nullopt;
     }
 
@@ -394,25 +445,109 @@ namespace handcontrol::tracking
         TrackingResult result;
         result.timestampSeconds = timestampSeconds;
 
-        if (! frame.isValid() || impl->palmSession == nullptr || impl->handSession == nullptr)
+        if (! frame.isValid() || impl == nullptr
+            || impl->palmSession == nullptr || impl->handSession == nullptr)
             return result;
 
-        auto detections = impl->runPalmDetector(frame);
-
-        int out = 0;
-        for (auto& det : detections)
+        // ---- Step 1: refresh tracked slots from their cached ROIs ---------------
+        for (auto& slot : impl->slots)
         {
-            if (out >= kMaxHands) break;
-            RoiTransform roi = impl->roiFromPalm(det);
-            auto handRes = impl->runHandLandmarks(frame, roi);
-            if (! handRes.ok) continue;
+            if (! slot.active) continue;
 
-            auto& slot = result.hands[static_cast<size_t>(out)];
-            slot.present = true;
-            slot.handedness = handRes.handedness;
-            slot.confidence = handRes.confidence;
-            slot.landmarks = handRes.landmarks;
-            ++out;
+            auto lr = impl->runHandLandmarks(frame, slot.roi);
+            if (! lr.ok || lr.confidence <= kHandExitThresh)
+            {
+                slot.active = false;
+                slot.lastConfidence = lr.ok ? lr.confidence : 0.0f;
+                continue;
+            }
+
+            slot.lastConfidence = lr.confidence;
+            slot.handedness     = lr.handedness;
+            slot.lastLandmarks  = lr.landmarks;
+            slot.roi            = roiFromLandmarks(lr.landmarks);
+        }
+
+        // ---- Step 2: run palm detector if any slot is empty (or for refresh) ---
+        const bool anySlotEmpty = std::any_of(impl->slots.begin(), impl->slots.end(),
+                                              [](const auto& s) { return ! s.active; });
+        const bool periodicRefresh = (++impl->framesSincePalmRefresh) >= kPalmRefreshInterval;
+
+        if (anySlotEmpty || periodicRefresh)
+        {
+            float bestPalmScore = 0.0f;
+            auto detections = impl->runPalmDetector(frame, bestPalmScore);
+            impl->framesSincePalmRefresh = 0;
+            result.diagnostics.lastPalmScore   = bestPalmScore;
+            result.diagnostics.palmRanThisFrame = true;
+
+            for (auto& det : detections)
+            {
+                RoiTransform candidateRoi = impl->roiFromPalm(det);
+
+                // Skip if this detection overlaps an already-tracked slot.
+                bool overlapsExisting = false;
+                for (const auto& s : impl->slots)
+                {
+                    if (! s.active) continue;
+                    if (roiIou(s.roi, candidateRoi) > kSlotOverlapIou)
+                    {
+                        overlapsExisting = true;
+                        break;
+                    }
+                }
+                if (overlapsExisting) continue;
+
+                // Find first empty slot.
+                int target = -1;
+                for (int i = 0; i < kMaxHands; ++i)
+                {
+                    if (! impl->slots[static_cast<size_t>(i)].active)
+                    {
+                        target = i;
+                        break;
+                    }
+                }
+                if (target < 0) break;
+
+                // Run landmark model on the new ROI to verify before committing.
+                auto lr = impl->runHandLandmarks(frame, candidateRoi);
+                if (! lr.ok || lr.confidence < kHandEnterThresh) continue;
+
+                auto& slot = impl->slots[static_cast<size_t>(target)];
+                slot.active         = true;
+                slot.lastConfidence = lr.confidence;
+                slot.handedness     = lr.handedness;
+                slot.lastLandmarks  = lr.landmarks;
+                slot.roi            = roiFromLandmarks(lr.landmarks);
+            }
+        }
+
+        // ---- Step 3: emit the result -------------------------------------------
+        const float frameW = static_cast<float>(frame.getWidth());
+        const float frameH = static_cast<float>(frame.getHeight());
+
+        for (int i = 0; i < kMaxHands; ++i)
+        {
+            const auto& slot = impl->slots[static_cast<size_t>(i)];
+            auto& outHand = result.hands[static_cast<size_t>(i)];
+            outHand.present     = slot.active;
+            outHand.handedness  = slot.handedness;
+            outHand.confidence  = slot.lastConfidence;
+
+            // Normalise pixel-space landmarks to [0,1] for downstream consumers.
+            for (int j = 0; j < kHandLandmarks; ++j)
+            {
+                outHand.landmarks[static_cast<size_t>(j)].x =
+                    slot.lastLandmarks[static_cast<size_t>(j)].x / frameW;
+                outHand.landmarks[static_cast<size_t>(j)].y =
+                    slot.lastLandmarks[static_cast<size_t>(j)].y / frameH;
+            }
+
+            // ROIs stay in pixel coords; the preview converts to its display
+            // rectangle when drawing.
+            result.diagnostics.activeRois[static_cast<size_t>(i)] = slot.roi;
+            result.diagnostics.roiActive[static_cast<size_t>(i)]  = slot.active;
         }
 
         return result;

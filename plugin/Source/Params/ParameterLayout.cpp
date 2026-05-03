@@ -24,6 +24,7 @@ namespace handcontrol::params
     {
         juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
+        // v0.1 originals
         layout.add(makeMeasurement(h1ThumbIndexDistance, "H1 Thumb-Index Distance"));
         layout.add(makeMeasurement(h1ThumbIndexAngle,    "H1 Thumb-Index Angle"));
         layout.add(makeMeasurement(h1ThumbPinkyDistance, "H1 Thumb-Pinky Distance"));
@@ -32,6 +33,14 @@ namespace handcontrol::params
         layout.add(makeMeasurement(h2ThumbIndexAngle,    "H2 Thumb-Index Angle"));
         layout.add(makeMeasurement(h2ThumbPinkyDistance, "H2 Thumb-Pinky Distance"));
         layout.add(makeMeasurement(h2ThumbPinkyAngle,    "H2 Thumb-Pinky Angle"));
+
+        // v0.2 new measurements
+        layout.add(makeMeasurement(h1HandX,    "H1 Hand X"));
+        layout.add(makeMeasurement(h1HandY,    "H1 Hand Y"));
+        layout.add(makeMeasurement(h1Openness, "H1 Openness"));
+        layout.add(makeMeasurement(h2HandX,    "H2 Hand X"));
+        layout.add(makeMeasurement(h2HandY,    "H2 Hand Y"));
+        layout.add(makeMeasurement(h2Openness, "H2 Openness"));
 
         layout.add(std::make_unique<juce::AudioParameterInt>(
             juce::ParameterID { toId(cameraIndex), 1 },
@@ -57,6 +66,16 @@ namespace handcontrol::params
         layout.add(std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID { toId(bypass), 1 },
             "Bypass",
+            false));
+
+        layout.add(std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID { toId(mirrorCamera), 1 },
+            "Mirror Camera",
+            true));
+
+        layout.add(std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID { toId(roiOverlay), 1 },
+            "Show ROI Overlay",
             false));
 
         return layout;

@@ -31,12 +31,16 @@ namespace handcontrol::tracking
             return err;
 
         identity.reset();
-        for (auto& f : filters)
+        for (auto& slot : landmarkFilters)
         {
-            f.thumbIndex.reset();
-            f.thumbIndexAngle.reset();
-            f.thumbPinky.reset();
-            f.thumbPinkyAngle.reset();
+            for (auto& f : slot.x) f.reset();
+            for (auto& f : slot.y) f.reset();
+        }
+        for (auto& d : slotDiagnostics)
+        {
+            d.active = false;
+            d.lastConfidence = 0.0f;
+            d.lastSeenTime = 0.0;
         }
         updateFilterConfig();
 
@@ -67,21 +71,26 @@ namespace handcontrol::tracking
         bypassed.store(shouldBypass, std::memory_order_relaxed);
     }
 
+    void HandTrackerThread::setMirrorCamera(bool shouldMirror) noexcept
+    {
+        camera.setMirror(shouldMirror);
+    }
+
     void HandTrackerThread::updateFilterConfig() noexcept
     {
-        // Map 0..1 smoothing to minCutoffHz in [6.0 .. 0.6] Hz (higher cutoff -> less smoothing).
+        // Smoothing 0..1 -> minCutoffHz in [6.0..0.6] Hz. Lower cutoff = more
+        // smoothing. Beta of 0.007 keeps the filter responsive when fingers move
+        // fast (high frequency content) while damping low-freq jitter.
         const float s = smoothing01.load(std::memory_order_relaxed);
         const double minCutoff = 6.0 - 5.4 * static_cast<double>(s);
         OneEuroFilter::Config cfg;
         cfg.minCutoffHz = minCutoff;
-        cfg.beta = 0.007;
-        cfg.dCutoffHz = 1.0;
-        for (auto& f : filters)
+        cfg.beta        = 0.007;
+        cfg.dCutoffHz   = 1.0;
+        for (auto& slot : landmarkFilters)
         {
-            f.thumbIndex.setConfig(cfg);
-            f.thumbIndexAngle.setConfig(cfg);
-            f.thumbPinky.setConfig(cfg);
-            f.thumbPinkyAngle.setConfig(cfg);
+            for (auto& f : slot.x) f.setConfig(cfg);
+            for (auto& f : slot.y) f.setConfig(cfg);
         }
     }
 
@@ -120,12 +129,44 @@ namespace handcontrol::tracking
             const auto maybeIdx = assignment.slotToInputIndex[static_cast<size_t>(slot)];
             if (! maybeIdx.has_value())
             {
+                slotDiagnostics[static_cast<size_t>(slot)].active = false;
                 publishLost(slot);
                 continue;
             }
-            const auto& hand = result.hands[static_cast<size_t>(*maybeIdx)];
-            const auto m = measure(hand);
-            publishMeasurements(slot, m, ts);
+
+            // Apply per-landmark One-Euro smoothing BEFORE measurement so that
+            // distance, angle, position and openness all benefit equally.
+            HandFrame smoothedHand = result.hands[static_cast<size_t>(*maybeIdx)];
+            auto& filters = landmarkFilters[static_cast<size_t>(slot)];
+            for (int i = 0; i < numLandmarks; ++i)
+            {
+                smoothedHand.landmarks[static_cast<size_t>(i)].x =
+                    filters.x[static_cast<size_t>(i)].process(smoothedHand.landmarks[static_cast<size_t>(i)].x, ts);
+                smoothedHand.landmarks[static_cast<size_t>(i)].y =
+                    filters.y[static_cast<size_t>(i)].process(smoothedHand.landmarks[static_cast<size_t>(i)].y, ts);
+            }
+
+            const auto m = measure(smoothedHand);
+
+            slotDiagnostics[static_cast<size_t>(slot)].active = true;
+            slotDiagnostics[static_cast<size_t>(slot)].lastConfidence = smoothedHand.confidence;
+            slotDiagnostics[static_cast<size_t>(slot)].lastSeenTime = ts;
+
+            if (! m.valid)
+            {
+                publishLost(slot);
+                continue;
+            }
+
+            const auto base = static_cast<MeasurementId>(slot * 4);
+            const auto extras = static_cast<MeasurementId>(
+                static_cast<int>(MeasurementId::hand1HandX) + slot * 3);
+            juce::ignoreUnused(extras);
+
+            publishMeasurements(slot, base,
+                                m.thumbIndex01, m.thumbIndexAngle01,
+                                m.thumbPinky01, m.thumbPinkyAngle01,
+                                m.handX01, m.handY01, m.openness01);
         }
 
         {
@@ -135,30 +176,26 @@ namespace handcontrol::tracking
             uiSnapshot.assignment = assignment;
             uiSnapshot.trackerHealthy = true;
             uiSnapshot.statusMessage = {};
+            uiSnapshot.slotDiagnostics = slotDiagnostics;
+            uiSnapshot.currentTime = ts;
         }
     }
 
-    void HandTrackerThread::publishMeasurements(int slot, const HandMeasurements& m, double ts)
+    void HandTrackerThread::publishMeasurements(int slot, const MeasurementId firstId,
+                                                 float v0, float v1, float v2, float v3,
+                                                 float vHandX, float vHandY, float vOpenness)
     {
-        auto& f = filters[static_cast<size_t>(slot)];
-        auto& last = lastPublished[static_cast<size_t>(slot)];
+        // First four are at slot*4..slot*4+3 (matches v0.1 layout).
+        bridge.publish(static_cast<MeasurementId>(static_cast<int>(firstId) + 0), v0);
+        bridge.publish(static_cast<MeasurementId>(static_cast<int>(firstId) + 1), v1);
+        bridge.publish(static_cast<MeasurementId>(static_cast<int>(firstId) + 2), v2);
+        bridge.publish(static_cast<MeasurementId>(static_cast<int>(firstId) + 3), v3);
 
-        if (! m.valid)
-        {
-            publishLost(slot);
-            return;
-        }
-
-        last.thumbIndex      = f.thumbIndex.process(m.thumbIndex01, ts);
-        last.thumbIndexAngle = f.thumbIndexAngle.process(m.thumbIndexAngle01, ts);
-        last.thumbPinky      = f.thumbPinky.process(m.thumbPinky01, ts);
-        last.thumbPinkyAngle = f.thumbPinkyAngle.process(m.thumbPinkyAngle01, ts);
-
-        const int baseId = slot * 4;
-        bridge.publish(static_cast<MeasurementId>(baseId + 0), last.thumbIndex);
-        bridge.publish(static_cast<MeasurementId>(baseId + 1), last.thumbIndexAngle);
-        bridge.publish(static_cast<MeasurementId>(baseId + 2), last.thumbPinky);
-        bridge.publish(static_cast<MeasurementId>(baseId + 3), last.thumbPinkyAngle);
+        // New v0.2 measurements: per-hand block of three.
+        const int extrasBase = static_cast<int>(MeasurementId::hand1HandX) + slot * 3;
+        bridge.publish(static_cast<MeasurementId>(extrasBase + 0), vHandX);
+        bridge.publish(static_cast<MeasurementId>(extrasBase + 1), vHandY);
+        bridge.publish(static_cast<MeasurementId>(extrasBase + 2), vOpenness);
     }
 
     void HandTrackerThread::publishLost(int slot)
@@ -166,20 +203,20 @@ namespace handcontrol::tracking
         if (holdOnLost.load(std::memory_order_relaxed))
             return;
 
-        auto& f = filters[static_cast<size_t>(slot)];
-        f.thumbIndex.reset();
-        f.thumbIndexAngle.reset();
-        f.thumbPinky.reset();
-        f.thumbPinkyAngle.reset();
-
-        auto& last = lastPublished[static_cast<size_t>(slot)];
-        last = {};
+        auto& filters = landmarkFilters[static_cast<size_t>(slot)];
+        for (auto& f : filters.x) f.reset();
+        for (auto& f : filters.y) f.reset();
 
         const int baseId = slot * 4;
         bridge.publish(static_cast<MeasurementId>(baseId + 0), 0.0f);
         bridge.publish(static_cast<MeasurementId>(baseId + 1), 0.0f);
         bridge.publish(static_cast<MeasurementId>(baseId + 2), 0.0f);
         bridge.publish(static_cast<MeasurementId>(baseId + 3), 0.0f);
+
+        const int extrasBase = static_cast<int>(MeasurementId::hand1HandX) + slot * 3;
+        bridge.publish(static_cast<MeasurementId>(extrasBase + 0), 0.0f);
+        bridge.publish(static_cast<MeasurementId>(extrasBase + 1), 0.0f);
+        bridge.publish(static_cast<MeasurementId>(extrasBase + 2), 0.0f);
     }
 
     HandTrackerThread::UISnapshot HandTrackerThread::latestSnapshotForUI() const
@@ -191,6 +228,8 @@ namespace handcontrol::tracking
         copy.assignment = uiSnapshot.assignment;
         copy.trackerHealthy = uiSnapshot.trackerHealthy;
         copy.statusMessage = uiSnapshot.statusMessage;
+        copy.slotDiagnostics = uiSnapshot.slotDiagnostics;
+        copy.currentTime = uiSnapshot.currentTime;
         return copy;
     }
 }

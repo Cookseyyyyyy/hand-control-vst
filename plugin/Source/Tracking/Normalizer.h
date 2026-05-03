@@ -4,16 +4,22 @@
 
 namespace handcontrol::tracking
 {
-    /** Ports the measurement + remap logic from `OSCHandcontrol.py` verbatim.
-        See docs/OSCHANDCONTROL_MATH.md for the exact formulas and the Python
-        functions they correspond to. */
+    /** Per-hand measurements published as DAW parameters. The first four match
+        `OSCHandcontrol.py` exactly; the last three are new in v0.2. */
     struct HandMeasurements
     {
-        bool  valid          { false };
-        float thumbIndex01   { 0.0f };  // remap_distance(distance1 / hand_length)
+        bool  valid             { false };
+
+        // Original four (ported from OSCHandcontrol.py)
+        float thumbIndex01      { 0.0f };  // remap_distance(distance1 / hand_length)
         float thumbIndexAngle01 { 0.0f };  // remap_angle(degrees(atan2(|dy|,|dx|)))
-        float thumbPinky01   { 0.0f };
+        float thumbPinky01      { 0.0f };
         float thumbPinkyAngle01 { 0.0f };
+
+        // New per-hand measurements
+        float handX01           { 0.0f };  // 0 = left edge of frame, 1 = right edge
+        float handY01           { 0.0f };  // 0 = top edge, 1 = bottom edge
+        float openness01        { 0.0f };  // 0 = closed fist, 1 = fully spread fingers
     };
 
     /** Remap ratio (distance/handLength) to 0..1 per the old Python script:
@@ -24,7 +30,7 @@ namespace handcontrol::tracking
             deadzone=30, maps 30..90 -> 0..1, clamped. */
     float remapAngleDeg(float degrees) noexcept;
 
-    /** Compute the four per-hand measurements from a single hand frame.
+    /** Compute the per-hand measurements from a single hand frame.
         If `hand.present` is false, returns `{valid=false}` with zeros.
         Distance-gates-angle rule from the Python script is enforced:
         if a distance remaps to 0, the matching angle is also forced to 0. */

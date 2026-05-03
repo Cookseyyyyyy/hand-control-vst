@@ -3,6 +3,7 @@
 #include <juce_video/juce_video.h>
 #include <juce_graphics/juce_graphics.h>
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -31,7 +32,8 @@ namespace handcontrol::tracking
         bool isOpen() const noexcept;
 
         /** Copy out the latest frame. Returns an invalid Image if nothing has been
-            captured yet. */
+            captured yet. If mirror mode is enabled, the returned frame is
+            horizontally flipped. */
         juce::Image snapshotLatest() const;
 
         using FrameCallback = std::function<void(const juce::Image& frame, double timestampSeconds)>;
@@ -42,6 +44,12 @@ namespace handcontrol::tracking
         /** Index passed to `open()`, or -1 if closed. */
         int currentDeviceIndex() const noexcept { return deviceIndex; }
 
+        /** When true (default), `snapshotLatest()` returns a horizontally
+            flipped image so the user sees a mirror image of themselves and
+            tracking matches their kinaesthetic expectation. */
+        void setMirror(bool shouldMirror) noexcept { mirrorEnabled.store(shouldMirror); }
+        bool isMirrored() const noexcept { return mirrorEnabled.load(); }
+
     private:
         class Listener;
         std::unique_ptr<juce::CameraDevice> device;
@@ -50,5 +58,6 @@ namespace handcontrol::tracking
         juce::Image latest;
         FrameCallback callback;
         int deviceIndex { -1 };
+        std::atomic<bool> mirrorEnabled { true };
     };
 }

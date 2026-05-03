@@ -7,7 +7,7 @@ namespace handcontrol::ui
         : source(src)
     {
         setOpaque(false);
-        startTimerHz(6);
+        startTimerHz(8);
     }
 
     void StatusBar::timerCallback()
@@ -21,22 +21,31 @@ namespace handcontrol::ui
         }
         else
         {
-            int count = 0;
-            juce::String which;
+            // Per-slot block: "H1 0.92" or "H1 lost (1.4s)" so users can see
+            // exactly when and why a meter has stopped moving.
+            juce::String text;
             for (int slot = 0; slot < 2; ++slot)
             {
-                const auto idx = snap.assignment.slotToInputIndex[static_cast<size_t>(slot)];
-                if (idx.has_value() && snap.result.hands[static_cast<size_t>(*idx)].present)
+                const auto& d = snap.slotDiagnostics[static_cast<size_t>(slot)];
+                if (text.isNotEmpty()) text << "   ";
+                text << "H" << (slot + 1) << " ";
+                if (d.active)
                 {
-                    ++count;
-                    if (which.isNotEmpty()) which << ", ";
-                    which << (slot == 0 ? "Hand 1" : "Hand 2");
+                    text << juce::String(d.lastConfidence, 2);
+                }
+                else if (d.lastSeenTime > 0.0)
+                {
+                    const double age = juce::jmax(0.0, snap.currentTime - d.lastSeenTime);
+                    text << "lost (" << juce::String(age, 1) << "s)";
+                }
+                else
+                {
+                    text << "-";
                 }
             }
-            if (count == 0)
-                currentText = "Tracker ready. No hands detected.";
-            else
-                currentText = "Tracking: " + which;
+            text << "    Palm " << juce::String(snap.result.diagnostics.lastPalmScore, 2);
+
+            currentText = text;
         }
         repaint();
     }
@@ -54,7 +63,7 @@ namespace handcontrol::ui
         inner.removeFromLeft(14.0f);
 
         g.setColour(colours::textDim);
-        g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::plain)));
+        g.setFont(juce::Font(juce::FontOptions("Menlo", 12.0f, juce::Font::plain)));
         g.drawFittedText(currentText, inner.toNearestInt(),
                          juce::Justification::centredLeft, 1);
     }

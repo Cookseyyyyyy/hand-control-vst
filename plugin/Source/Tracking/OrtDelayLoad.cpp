@@ -1,37 +1,34 @@
-#ifdef _WIN32
+ #ifdef _WIN32
 
 /**
  * OrtDelayLoad.cpp
  *
- * When onnxruntime.dll is delay-loaded, Windows resolves it on first use.
- * Ableton (and other DAW scanners) load our VST3 into a process whose working
- * directory is not the plugin bundle, so the default delay-load search would
- * fail to find the DLL in Contents/x86_64-win/.
+ * Despite the filename, we no longer use MSVC delay-load for onnxruntime.dll.
+ * Some DAW scanners still reject a VST3 with *any* ONNX Runtime import entry,
+ * even a delay import. Instead we keep ONNX Runtime entirely out of the import
+ * table and load it manually from the plugin binary's own directory.
  *
- * We register a custom delay-load failure hook that locates the DLL relative
- * to the loaded module's own path (using GetModuleFileName on a symbol in
- * this translation unit), and loads it with LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR
- * so Windows looks in the same directory as the caller.
- *
- * This approach:
- *   - Requires zero cooperation from the host process.
- *   - Does not pollute the system PATH.
- *   - Is safe to call from DllMain-adjacent contexts (no allocation,
- *     just a kernel call).
+ * `handcontrolLoadOrtApiBaseFromPluginDir()` is called from
+ * `OnnxHandTracker::initialise()` before any ONNX Runtime C++ wrapper is used.
  */
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
-#include <delayimp.h>
+#include <onnxruntime_c_api.h>
 #include <string>
+
+extern "C" const OrtApiBase* handcontrolLoadOrtApiBaseFromPluginDir();
+
+using OrtGetApiBaseFn = const OrtApiBase* (*)();
 
 namespace
 {
     static HMODULE g_ort_module = nullptr;
+    static const OrtApiBase* g_api_base = nullptr;
 
-    static HMODULE loadOrtFromBundleDir()
+    static HMODULE loadOrtFromPluginDir()
     {
         if (g_ort_module)
             return g_ort_module;
@@ -41,7 +38,7 @@ namespace
         HMODULE self = nullptr;
         ::GetModuleHandleExW(
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            reinterpret_cast<LPCWSTR>(&loadOrtFromBundleDir),
+            reinterpret_cast<LPCWSTR>(&loadOrtFromPluginDir),
             &self);
 
         if (self == nullptr)
@@ -57,33 +54,30 @@ namespace
 
         // LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR (0x100) makes Windows search the
         // directory containing the DLL being loaded for its own dependencies.
-        HMODULE h = ::LoadLibraryExW(dllPath.c_str(), nullptr, 0x100);
+        HMODULE h = ::LoadLibraryExW(dllPath.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR);
         if (h)
             g_ort_module = h;
 
         return h;
     }
-
-    // Delay-load notification hook. Intercepted when the loader is about to
-    // resolve onnxruntime.dll for the first time.
-    static FARPROC WINAPI delayLoadHook(unsigned dliNotify,
-                                        DelayLoadInfo* pdli)
-    {
-        if (dliNotify == dliNotePreLoadLibrary)
-        {
-            if (pdli && pdli->szDll &&
-                ::_strnicmp(pdli->szDll, "onnxruntime", 11) == 0)
-            {
-                HMODULE h = loadOrtFromBundleDir();
-                if (h)
-                    return reinterpret_cast<FARPROC>(h);
-            }
-        }
-        return nullptr;
-    }
 }
 
-// Register the hook by writing to the linker-provided pointer.
-ExternC const PfnDliHook __pfnDliNotifyHook2 = delayLoadHook;
+extern "C" const OrtApiBase* handcontrolLoadOrtApiBaseFromPluginDir()
+{
+    if (g_api_base)
+        return g_api_base;
+
+    HMODULE h = loadOrtFromPluginDir();
+    if (! h)
+        return nullptr;
+
+    auto* getApiBase = reinterpret_cast<OrtGetApiBaseFn>(
+        ::GetProcAddress(h, "OrtGetApiBase"));
+    if (! getApiBase)
+        return nullptr;
+
+    g_api_base = getApiBase();
+    return g_api_base;
+}
 
 #endif

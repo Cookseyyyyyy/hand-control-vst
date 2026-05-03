@@ -23,9 +23,9 @@ namespace handcontrol::tracking
           - The thread pulls the latest frame from `CameraSource`,
           - Runs `IHandTracker::process()` on it,
           - Stabilises hand identity with `HandIdentityTracker`,
+          - Smooths each landmark x/y via `OneEuroFilter` (per-landmark, not per-output),
           - Computes `HandMeasurements` via `measure()`,
-          - Smooths each output via `OneEuroFilter`,
-          - Publishes the eight values into `ParameterBridge`.
+          - Publishes the values into `ParameterBridge`.
 
         Also exposes a snapshot of the latest result for the UI thread. */
     class HandTrackerThread : private juce::Thread
@@ -35,9 +35,16 @@ namespace handcontrol::tracking
                           std::unique_ptr<IHandTracker> trackerImpl);
         ~HandTrackerThread() override;
 
-        /** Starts/restarts the camera on the given device and kicks off the worker. */
         std::optional<std::string> start(int cameraIndex);
         void stop();
+
+        /** Per-slot diagnostic data, surfaced to the UI for the status bar. */
+        struct SlotDiagnostics
+        {
+            float lastConfidence { 0.0f };
+            double lastSeenTime  { 0.0 };
+            bool active          { false };
+        };
 
         /** Safe from any thread. Used by the UI to draw the preview. */
         struct UISnapshot
@@ -47,6 +54,8 @@ namespace handcontrol::tracking
             HandIdentityTracker::Assignment assignment;
             bool trackerHealthy { false };
             std::string statusMessage;
+            std::array<SlotDiagnostics, 2> slotDiagnostics {};
+            double currentTime { 0.0 };
         };
         UISnapshot latestSnapshotForUI() const;
 
@@ -54,11 +63,14 @@ namespace handcontrol::tracking
         void setSmoothing(float value01) noexcept;
         void setHoldOnLost(bool shouldHold) noexcept;
         void setBypass(bool shouldBypass) noexcept;
+        void setMirrorCamera(bool shouldMirror) noexcept;
 
     private:
         void run() override;
         void processOnce(const juce::Image& frame, double timestampSeconds);
-        void publishMeasurements(int slotIndex, const HandMeasurements& m, double ts);
+        void publishMeasurements(int slotIndex, const handcontrol::params::MeasurementId firstId,
+                                  float v0, float v1, float v2, float v3,
+                                  float vHandX, float vHandY, float vOpenness);
         void publishLost(int slotIndex);
         void updateFilterConfig() noexcept;
 
@@ -67,23 +79,17 @@ namespace handcontrol::tracking
         CameraSource camera;
         HandIdentityTracker identity;
 
-        struct SlotFilters
+        // 21 landmarks * 2 axes = 42 filters per slot. We smooth at the source
+        // so all derived measurements (distances, angles, openness, position)
+        // benefit equally.
+        struct LandmarkFilters
         {
-            OneEuroFilter thumbIndex;
-            OneEuroFilter thumbIndexAngle;
-            OneEuroFilter thumbPinky;
-            OneEuroFilter thumbPinkyAngle;
+            std::array<OneEuroFilter, numLandmarks> x {};
+            std::array<OneEuroFilter, numLandmarks> y {};
         };
-        std::array<SlotFilters, 2> filters;
+        std::array<LandmarkFilters, 2> landmarkFilters;
 
-        struct LastValues
-        {
-            float thumbIndex { 0.0f };
-            float thumbIndexAngle { 0.0f };
-            float thumbPinky { 0.0f };
-            float thumbPinkyAngle { 0.0f };
-        };
-        std::array<LastValues, 2> lastPublished;
+        std::array<SlotDiagnostics, 2> slotDiagnostics {};
 
         mutable std::mutex snapshotMutex;
         UISnapshot uiSnapshot;

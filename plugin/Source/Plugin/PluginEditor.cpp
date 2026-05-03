@@ -21,10 +21,11 @@ namespace handcontrol
     {
         setLookAndFeel(&theme);
         setResizable(true, true);
-        setResizeLimits(780, 580, 1600, 1200);
-        setSize(880, 680);
+        setResizeLimits(880, 620, 1800, 1300);
+        setSize(980, 760);
 
         buildControls();
+        processor.restartTracker();
 
         title.setText("Hand Control", juce::dontSendNotification);
         title.setFont(juce::Font(juce::FontOptions(20.0f, juce::Font::bold)));
@@ -47,15 +48,25 @@ namespace handcontrol
             handcontrol::params::MeasurementId id;
             juce::Colour accent;
         };
-        const std::array<MeterSpec, 8> specs {{
-            { "H1 Thumb-Index Distance",  params::MeasurementId::hand1ThumbIndexDistance, ui::colours::accentIndex },
-            { "H1 Thumb-Index Angle",     params::MeasurementId::hand1ThumbIndexAngle,    ui::colours::accentIndex },
-            { "H1 Thumb-Pinky Distance",  params::MeasurementId::hand1ThumbPinkyDistance, ui::colours::accentPinky },
-            { "H1 Thumb-Pinky Angle",     params::MeasurementId::hand1ThumbPinkyAngle,    ui::colours::accentPinky },
-            { "H2 Thumb-Index Distance",  params::MeasurementId::hand2ThumbIndexDistance, ui::colours::accentIndex },
-            { "H2 Thumb-Index Angle",     params::MeasurementId::hand2ThumbIndexAngle,    ui::colours::accentIndex },
-            { "H2 Thumb-Pinky Distance",  params::MeasurementId::hand2ThumbPinkyDistance, ui::colours::accentPinky },
-            { "H2 Thumb-Pinky Angle",     params::MeasurementId::hand2ThumbPinkyAngle,    ui::colours::accentPinky }
+
+        // Layout: 2 rows (per hand) x 7 columns. Original 4 + 3 new per hand.
+        const std::array<MeterSpec, 14> specs {{
+            // Row 1: Hand 1
+            { "H1 Thumb-Index Dist",  params::MeasurementId::hand1ThumbIndexDistance, ui::colours::accentIndex },
+            { "H1 Thumb-Index Angle", params::MeasurementId::hand1ThumbIndexAngle,    ui::colours::accentIndex },
+            { "H1 Thumb-Pinky Dist",  params::MeasurementId::hand1ThumbPinkyDistance, ui::colours::accentPinky },
+            { "H1 Thumb-Pinky Angle", params::MeasurementId::hand1ThumbPinkyAngle,    ui::colours::accentPinky },
+            { "H1 Hand X",            params::MeasurementId::hand1HandX,              ui::colours::accentHand1 },
+            { "H1 Hand Y",            params::MeasurementId::hand1HandY,              ui::colours::accentHand1 },
+            { "H1 Openness",          params::MeasurementId::hand1Openness,           ui::colours::accentHand1 },
+            // Row 2: Hand 2
+            { "H2 Thumb-Index Dist",  params::MeasurementId::hand2ThumbIndexDistance, ui::colours::accentIndex },
+            { "H2 Thumb-Index Angle", params::MeasurementId::hand2ThumbIndexAngle,    ui::colours::accentIndex },
+            { "H2 Thumb-Pinky Dist",  params::MeasurementId::hand2ThumbPinkyDistance, ui::colours::accentPinky },
+            { "H2 Thumb-Pinky Angle", params::MeasurementId::hand2ThumbPinkyAngle,    ui::colours::accentPinky },
+            { "H2 Hand X",            params::MeasurementId::hand2HandX,              ui::colours::accentHand2 },
+            { "H2 Hand Y",            params::MeasurementId::hand2HandY,              ui::colours::accentHand2 },
+            { "H2 Openness",          params::MeasurementId::hand2Openness,           ui::colours::accentHand2 }
         }};
         for (const auto& spec : specs)
         {
@@ -81,6 +92,8 @@ namespace handcontrol
 
         addAndMakeVisible(previewToggle);
         addAndMakeVisible(holdToggle);
+        addAndMakeVisible(mirrorToggle);
+        addAndMakeVisible(roiToggle);
 
         smoothingSlider.setSliderStyle(juce::Slider::LinearHorizontal);
         smoothingSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 52, 18);
@@ -93,16 +106,24 @@ namespace handcontrol
         addAndMakeVisible(smoothingLabel);
 
         auto& vts = processor.getValueTreeState();
-        cameraAttach = std::make_unique<ComboAttachment>(vts, pid(params::cameraIndex), cameraBox);
-        previewAttach = std::make_unique<ButtonAttachment>(vts, pid(params::previewVisible), previewToggle);
-        holdAttach    = std::make_unique<ButtonAttachment>(vts, pid(params::holdOnLost),     holdToggle);
-        smoothingAttach = std::make_unique<SliderAttachment>(vts, pid(params::smoothing),    smoothingSlider);
+        cameraAttach    = std::make_unique<ComboAttachment>(vts, pid(params::cameraIndex), cameraBox);
+        previewAttach   = std::make_unique<ButtonAttachment>(vts, pid(params::previewVisible), previewToggle);
+        holdAttach      = std::make_unique<ButtonAttachment>(vts, pid(params::holdOnLost),     holdToggle);
+        mirrorAttach    = std::make_unique<ButtonAttachment>(vts, pid(params::mirrorCamera),   mirrorToggle);
+        roiAttach       = std::make_unique<ButtonAttachment>(vts, pid(params::roiOverlay),     roiToggle);
+        smoothingAttach = std::make_unique<SliderAttachment>(vts, pid(params::smoothing),      smoothingSlider);
 
         previewToggle.onStateChange = [this]()
         {
             preview.setVisible(previewToggle.getToggleState());
             resized();
         };
+        roiToggle.onStateChange = [this]()
+        {
+            preview.setShowRoi(roiToggle.getToggleState());
+        };
+        // Initial sync from current parameter value.
+        preview.setShowRoi(roiToggle.getToggleState());
     }
 
     void PluginEditor::populateCameraBox()
@@ -140,21 +161,26 @@ namespace handcontrol
         statusBar.setBounds(statusRow);
         bounds.removeFromBottom(6);
 
-        auto controlsRow = bounds.removeFromBottom(36);
-        auto left = controlsRow.removeFromLeft(controlsRow.getWidth() / 2);
-        cameraLabel.setBounds(left.removeFromLeft(58));
-        left.removeFromLeft(4);
-        cameraBox.setBounds(left.removeFromLeft(220).reduced(0, 4));
-        left.removeFromLeft(12);
-        previewToggle.setBounds(left.removeFromLeft(120));
-        holdToggle.setBounds(controlsRow.removeFromLeft(140));
-        smoothingLabel.setBounds(controlsRow.removeFromLeft(80));
-        smoothingSlider.setBounds(controlsRow.reduced(4, 6));
+        // Two rows of controls: top has camera + toggles, bottom has smoothing.
+        auto controls2 = bounds.removeFromBottom(32);
+        smoothingLabel.setBounds(controls2.removeFromLeft(80));
+        smoothingSlider.setBounds(controls2.reduced(4, 6));
+
+        auto controls1 = bounds.removeFromBottom(32);
+        cameraLabel.setBounds(controls1.removeFromLeft(58));
+        controls1.removeFromLeft(4);
+        cameraBox.setBounds(controls1.removeFromLeft(220).reduced(0, 4));
+        controls1.removeFromLeft(12);
+        previewToggle.setBounds(controls1.removeFromLeft(110));
+        mirrorToggle.setBounds (controls1.removeFromLeft(100));
+        holdToggle.setBounds   (controls1.removeFromLeft(140));
+        roiToggle.setBounds    (controls1.removeFromLeft(110));
         bounds.removeFromBottom(8);
 
         const bool showPreview = previewToggle.getToggleState();
+        // 2 rows of 7 meters; allow more vertical space for them.
         auto metersArea = showPreview
-            ? bounds.removeFromBottom(juce::jmax(180, bounds.getHeight() / 3))
+            ? bounds.removeFromBottom(juce::jmax(170, bounds.getHeight() * 2 / 5))
             : bounds;
 
         if (showPreview)
@@ -164,9 +190,8 @@ namespace handcontrol
         }
         preview.setVisible(showPreview);
 
-        // 2 rows of 4 meters, grouped by hand.
         const int rows = 2;
-        const int cols = 4;
+        const int cols = 7;
         const int cellW = metersArea.getWidth() / cols;
         const int cellH = metersArea.getHeight() / rows;
         for (int r = 0; r < rows; ++r)
@@ -177,8 +202,8 @@ namespace handcontrol
                 if (idx < meters.size())
                     meters[idx]->setBounds(metersArea.getX() + c * cellW,
                                            metersArea.getY() + r * cellH,
-                                           cellW - 6,
-                                           cellH - 6);
+                                           cellW - 4,
+                                           cellH - 4);
             }
         }
     }

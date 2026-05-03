@@ -63,6 +63,8 @@ target_sources(HandControlPlugin PRIVATE
     Source/Tracking/OrtDelayLoad.cpp
     Source/Tracking/PalmAnchors.cpp
     Source/Tracking/PalmAnchors.h
+    Source/Tracking/Roi.cpp
+    Source/Tracking/Roi.h
     Source/Tracking/ImagePreprocess.cpp
     Source/Tracking/ImagePreprocess.h
     Source/Tracking/HandTrackerThread.cpp
@@ -98,7 +100,6 @@ target_compile_definitions(HandControlPlugin PRIVATE
 
 target_link_libraries(HandControlPlugin PRIVATE
     HandControlModels
-    "${ONNXRUNTIME_IMPORT_LIBRARIES}"
     juce::juce_audio_utils
     juce::juce_audio_processors
     juce::juce_audio_basics
@@ -113,19 +114,14 @@ target_link_libraries(HandControlPlugin PRIVATE
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
 
+if(NOT WIN32)
+    target_link_libraries(HandControlPlugin PRIVATE "${ONNXRUNTIME_IMPORT_LIBRARIES}")
+endif()
+
 set_target_properties(HandControlPlugin PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
     CXX_EXTENSIONS OFF)
-
-if(WIN32)
-    # Delay-load onnxruntime.dll so Ableton's plugin scanner can LoadLibrary
-    # our VST3 without onnxruntime.dll being on the system PATH.
-    # The option must be on the final VST3/Standalone link target (not the
-    # shared code lib), so we defer it to a post-configure step below.
-    # delayimp provides the delay-load stub runtime.
-    target_link_libraries(HandControlPlugin PRIVATE delayimp)
-endif()
 
 # -----------------------------------------------------------------------------
 # Bundle the ONNX Runtime shared library alongside the plugin so it loads at
@@ -192,14 +188,6 @@ foreach(_fmt VST3 AU Standalone)
     if(TARGET ${_sub_target})
         handcontrol_stage_runtime_into_bundle(${_sub_target})
 
-        # Apply delay-load on the final link so Windows can scan/load the
-        # VST3 before onnxruntime.dll is located. The OrtDelayLoad hook then
-        # resolves it from the bundle directory at first use.
-        if(WIN32)
-            target_link_options(${_sub_target} PRIVATE
-                "/DELAYLOAD:onnxruntime.dll"
-                "/DEPENDENTLOADFLAG:0x100")
-        endif()
     endif()
 endforeach()
 

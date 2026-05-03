@@ -37,20 +37,20 @@ namespace handcontrol
           bridge(apvts),
           tracker(std::make_unique<tracking::HandTrackerThread>(bridge, makeTrackerImpl()))
     {
-        apvts.addParameterListener(juce::String(params::cameraIndex.data(), params::cameraIndex.size()), this);
-        apvts.addParameterListener(juce::String(params::smoothing.data(),  params::smoothing.size()),  this);
-        apvts.addParameterListener(juce::String(params::holdOnLost.data(), params::holdOnLost.size()), this);
-        apvts.addParameterListener(juce::String(params::bypass.data(),     params::bypass.size()),     this);
-
-        restartTracker();
+        apvts.addParameterListener(juce::String(params::cameraIndex.data(),  params::cameraIndex.size()),  this);
+        apvts.addParameterListener(juce::String(params::smoothing.data(),    params::smoothing.size()),    this);
+        apvts.addParameterListener(juce::String(params::holdOnLost.data(),   params::holdOnLost.size()),   this);
+        apvts.addParameterListener(juce::String(params::bypass.data(),       params::bypass.size()),       this);
+        apvts.addParameterListener(juce::String(params::mirrorCamera.data(), params::mirrorCamera.size()), this);
     }
 
     PluginProcessor::~PluginProcessor()
     {
-        apvts.removeParameterListener(juce::String(params::cameraIndex.data(), params::cameraIndex.size()), this);
-        apvts.removeParameterListener(juce::String(params::smoothing.data(),  params::smoothing.size()),  this);
-        apvts.removeParameterListener(juce::String(params::holdOnLost.data(), params::holdOnLost.size()), this);
-        apvts.removeParameterListener(juce::String(params::bypass.data(),     params::bypass.size()),     this);
+        apvts.removeParameterListener(juce::String(params::cameraIndex.data(),  params::cameraIndex.size()),  this);
+        apvts.removeParameterListener(juce::String(params::smoothing.data(),    params::smoothing.size()),    this);
+        apvts.removeParameterListener(juce::String(params::holdOnLost.data(),   params::holdOnLost.size()),   this);
+        apvts.removeParameterListener(juce::String(params::bypass.data(),       params::bypass.size()),       this);
+        apvts.removeParameterListener(juce::String(params::mirrorCamera.data(), params::mirrorCamera.size()), this);
     }
 
     void PluginProcessor::prepareToPlay(double, int) {}
@@ -99,10 +99,11 @@ namespace handcontrol
 
     void PluginProcessor::parameterChanged(const juce::String& id, float newValue)
     {
-        const juce::String cameraId (params::cameraIndex.data(),  params::cameraIndex.size());
-        const juce::String smoothId (params::smoothing.data(),    params::smoothing.size());
-        const juce::String holdId   (params::holdOnLost.data(),   params::holdOnLost.size());
-        const juce::String bypassId (params::bypass.data(),       params::bypass.size());
+        const juce::String cameraId (params::cameraIndex.data(),   params::cameraIndex.size());
+        const juce::String smoothId (params::smoothing.data(),     params::smoothing.size());
+        const juce::String holdId   (params::holdOnLost.data(),    params::holdOnLost.size());
+        const juce::String bypassId (params::bypass.data(),        params::bypass.size());
+        const juce::String mirrorId (params::mirrorCamera.data(),  params::mirrorCamera.size());
 
         if (id == cameraId)
         {
@@ -120,6 +121,10 @@ namespace handcontrol
         {
             tracker->setBypass(newValue > 0.5f);
         }
+        else if (id == mirrorId)
+        {
+            tracker->setMirrorCamera(newValue > 0.5f);
+        }
     }
 
     void PluginProcessor::restartTracker()
@@ -134,10 +139,13 @@ namespace handcontrol
             apvts.getParameter(juce::String(params::holdOnLost.data(), params::holdOnLost.size())));
         auto* bypassParam = dynamic_cast<juce::AudioParameterBool*>(
             apvts.getParameter(juce::String(params::bypass.data(), params::bypass.size())));
+        auto* mirrorParam = dynamic_cast<juce::AudioParameterBool*>(
+            apvts.getParameter(juce::String(params::mirrorCamera.data(), params::mirrorCamera.size())));
 
         if (smoothingParam) tracker->setSmoothing(smoothingParam->get());
         if (holdParam)      tracker->setHoldOnLost(holdParam->get());
         if (bypassParam)    tracker->setBypass(bypassParam->get());
+        if (mirrorParam)    tracker->setMirrorCamera(mirrorParam->get());
 
         const int cameraIdx = cameraParam ? cameraParam->get() : 0;
         if (auto err = tracker->start(cameraIdx))

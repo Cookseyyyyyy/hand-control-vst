@@ -24,6 +24,16 @@ namespace handcontrol::tracking
         float y { 0.0f };
     };
 
+    /** Oriented region of interest in the camera frame, used to crop a hand
+        sub-image for the landmark model. */
+    struct RoiTransform
+    {
+        float centerX     { 0.0f };  // ROI centre in original image pixels
+        float centerY     { 0.0f };
+        float size        { 0.0f };  // square side length in original pixels
+        float rotationRad { 0.0f };
+    };
+
     enum class Handedness : uint8_t { unknown, left, right };
 
     struct HandFrame
@@ -43,6 +53,17 @@ namespace handcontrol::tracking
         }
     };
 
+    /** Optional per-frame diagnostics emitted by the tracker so the UI can
+        show what the model is doing internally. None of these affect the
+        published parameter values; they are pure observability. */
+    struct TrackerDiagnostics
+    {
+        float lastPalmScore { 0.0f };           // best palm-detector score this frame
+        bool  palmRanThisFrame { false };       // true if the palm detector ran
+        std::array<RoiTransform, 2> activeRois {};
+        std::array<bool, 2>         roiActive  { false, false };
+    };
+
     /** Result of a single tracking iteration over a camera frame.
         Up to two hands, in the order MediaPipe returned them (unstable).
         The `HandIdentityTracker` stabilises these into Hand 1 / Hand 2. */
@@ -50,5 +71,6 @@ namespace handcontrol::tracking
     {
         double timestampSeconds { 0.0 };
         std::array<HandFrame, 2> hands {};
+        TrackerDiagnostics diagnostics {};
     };
 }

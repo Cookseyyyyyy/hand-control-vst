@@ -2,9 +2,11 @@ add_executable(HandControlTests
     NormalizerTests.cpp
     OneEuroFilterTests.cpp
     HandIdentityTrackerTests.cpp
+    RoiTests.cpp
     ${CMAKE_SOURCE_DIR}/plugin/Source/Tracking/Normalizer.cpp
     ${CMAKE_SOURCE_DIR}/plugin/Source/Tracking/OneEuroFilter.cpp
-    ${CMAKE_SOURCE_DIR}/plugin/Source/Tracking/HandIdentityTracker.cpp)
+    ${CMAKE_SOURCE_DIR}/plugin/Source/Tracking/HandIdentityTracker.cpp
+    ${CMAKE_SOURCE_DIR}/plugin/Source/Tracking/Roi.cpp)
 
 target_include_directories(HandControlTests PRIVATE
     ${CMAKE_SOURCE_DIR}/plugin/Source)

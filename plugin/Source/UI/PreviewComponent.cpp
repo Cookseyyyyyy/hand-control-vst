@@ -65,7 +65,7 @@ namespace handcontrol::ui
 
             g.drawImage(snapshot.frame, frameRect, juce::RectanglePlacement::stretchToFit);
             g.setColour(colours::background.withAlpha(0.25f));
-            g.fillRect(frameRect);  // subtle darken for overlay contrast
+            g.fillRect(frameRect);
         }
         else
         {
@@ -79,7 +79,20 @@ namespace handcontrol::ui
             return;
         }
 
-        // Draw each assigned hand.
+        // Optional ROI overlay (per slot, in the slot's accent colour).
+        if (showRoi)
+        {
+            for (int slot = 0; slot < 2; ++slot)
+            {
+                if (! snapshot.result.diagnostics.roiActive[static_cast<size_t>(slot)])
+                    continue;
+                drawRoi(g, snapshot.result.diagnostics.activeRois[static_cast<size_t>(slot)],
+                        frameRect,
+                        slot == 0 ? colours::accentHand1 : colours::accentHand2);
+            }
+        }
+
+        // Hand skeletons.
         for (int slot = 0; slot < 2; ++slot)
         {
             const auto maybeIdx = snapshot.assignment.slotToInputIndex[static_cast<size_t>(slot)];
@@ -107,7 +120,6 @@ namespace handcontrol::ui
                      frameRect.getY() + p.y * frameRect.getHeight() };
         };
 
-        // Skeleton
         g.setColour(accent.withAlpha(0.85f));
         for (const auto& c : kConnections)
         {
@@ -116,7 +128,6 @@ namespace handcontrol::ui
             g.drawLine({ a, b }, 1.6f);
         }
 
-        // Emphasise thumb-index and thumb-pinky.
         auto highlight = [&](int a, int b, juce::Colour colour, float thickness)
         {
             const auto pa = toScreen(hand.landmarks[static_cast<size_t>(a)]);
@@ -131,7 +142,6 @@ namespace handcontrol::ui
         highlight((int) Landmark::thumbTip, (int) Landmark::indexTip, colours::accentIndex, 3.0f);
         highlight((int) Landmark::thumbTip, (int) Landmark::pinkyTip, colours::accentPinky, 3.0f);
 
-        // Joints
         for (const auto& lm : hand.landmarks)
         {
             auto p = toScreen(lm);
@@ -139,7 +149,6 @@ namespace handcontrol::ui
             g.fillEllipse(p.x - 2.5f, p.y - 2.5f, 5.0f, 5.0f);
         }
 
-        // Label near wrist
         const auto wristPt = toScreen(hand.at(Landmark::wrist));
         g.setColour(colours::background.withAlpha(0.7f));
         const auto labelRect = juce::Rectangle<float>(wristPt.x - 18.0f, wristPt.y + 6.0f, 36.0f, 18.0f);
@@ -147,5 +156,48 @@ namespace handcontrol::ui
         g.setColour(accent);
         g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
         g.drawFittedText(label, labelRect.toNearestInt(), juce::Justification::centred, 1);
+    }
+
+    void PreviewComponent::drawRoi(juce::Graphics& g,
+                                   const handcontrol::tracking::RoiTransform& roi,
+                                   const juce::Rectangle<float>& frameRect,
+                                   juce::Colour accent)
+    {
+        if (! snapshot.frame.isValid()) return;
+        const float frameW = static_cast<float>(snapshot.frame.getWidth());
+        const float frameH = static_cast<float>(snapshot.frame.getHeight());
+        if (frameW <= 0.0f || frameH <= 0.0f) return;
+
+        // Convert ROI corners (pixel coords in the camera frame) into the
+        // displayed frameRect's coords.
+        auto cameraToScreen = [&](float cx, float cy) -> juce::Point<float>
+        {
+            return { frameRect.getX() + (cx / frameW) * frameRect.getWidth(),
+                     frameRect.getY() + (cy / frameH) * frameRect.getHeight() };
+        };
+
+        const float half = roi.size * 0.5f;
+        const float c = std::cos(roi.rotationRad);
+        const float s = std::sin(roi.rotationRad);
+
+        // Four ROI corners in local frame, rotated into camera coords.
+        std::array<juce::Point<float>, 4> corners {{
+            cameraToScreen(roi.centerX + (-half * c - -half * s),
+                           roi.centerY + (-half * s + -half * c)),
+            cameraToScreen(roi.centerX + ( half * c - -half * s),
+                           roi.centerY + ( half * s + -half * c)),
+            cameraToScreen(roi.centerX + ( half * c -  half * s),
+                           roi.centerY + ( half * s +  half * c)),
+            cameraToScreen(roi.centerX + (-half * c -  half * s),
+                           roi.centerY + (-half * s +  half * c))
+        }};
+
+        juce::Path p;
+        p.startNewSubPath(corners[0]);
+        for (int i = 1; i < 4; ++i) p.lineTo(corners[i]);
+        p.closeSubPath();
+
+        g.setColour(accent.withAlpha(0.6f));
+        g.strokePath(p, juce::PathStrokeType(1.5f));
     }
 }

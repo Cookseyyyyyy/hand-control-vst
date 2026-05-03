@@ -43,7 +43,9 @@ namespace handcontrol
         juce::Label cameraLabel { {}, "Camera" };
 
         juce::ToggleButton previewToggle { "Preview" };
-        juce::ToggleButton holdToggle { "Hold On Lost" };
+        juce::ToggleButton holdToggle    { "Hold On Lost" };
+        juce::ToggleButton mirrorToggle  { "Mirror" };
+        juce::ToggleButton roiToggle     { "Show ROI" };
 
         juce::Slider smoothingSlider;
         juce::Label smoothingLabel { {}, "Smoothing" };
@@ -55,6 +57,8 @@ namespace handcontrol
         std::unique_ptr<SliderAttachment> smoothingAttach;
         std::unique_ptr<ButtonAttachment> previewAttach;
         std::unique_ptr<ButtonAttachment> holdAttach;
+        std::unique_ptr<ButtonAttachment> mirrorAttach;
+        std::unique_ptr<ButtonAttachment> roiAttach;
         std::unique_ptr<ComboAttachment>  cameraAttach;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PluginEditor)

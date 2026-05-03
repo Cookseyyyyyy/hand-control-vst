@@ -45,10 +45,10 @@ namespace handcontrol
         handcontrol::tracking::HandTrackerThread& getTracker() noexcept { return *tracker; }
 
         juce::String getLastStartError() const { return lastStartError; }
+        void restartTracker();
 
     private:
         void parameterChanged(const juce::String& id, float newValue) override;
-        void restartTracker();
 
         juce::AudioProcessorValueTreeState apvts;
         handcontrol::params::ParameterBridge bridge;

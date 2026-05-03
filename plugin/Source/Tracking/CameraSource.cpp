@@ -79,8 +79,36 @@ namespace handcontrol::tracking
 
     juce::Image CameraSource::snapshotLatest() const
     {
-        std::lock_guard lock(latestMutex);
-        return latest.createCopy();
+        juce::Image src;
+        {
+            std::lock_guard lock(latestMutex);
+            src = latest.createCopy();
+        }
+        if (! src.isValid() || ! mirrorEnabled.load(std::memory_order_relaxed))
+            return src;
+
+        // Horizontal flip for the mirror display + matching tracker input.
+        // Implemented as a pixel copy in BitmapData; for ARGB this is a 4-byte
+        // memmove per scanline pair.
+        juce::Image flipped(src.getFormat(), src.getWidth(), src.getHeight(), false);
+        const int w = src.getWidth();
+        const int h = src.getHeight();
+        juce::Image::BitmapData srcBmp(src,    juce::Image::BitmapData::readOnly);
+        juce::Image::BitmapData dstBmp(flipped, juce::Image::BitmapData::writeOnly);
+        const int bytesPerPixel = srcBmp.pixelStride;
+        for (int y = 0; y < h; ++y)
+        {
+            const auto* srcRow = srcBmp.getLinePointer(y);
+            auto*       dstRow = dstBmp.getLinePointer(y);
+            for (int x = 0; x < w; ++x)
+            {
+                const auto* sp = srcRow + (w - 1 - x) * bytesPerPixel;
+                auto*       dp = dstRow + x * bytesPerPixel;
+                for (int b = 0; b < bytesPerPixel; ++b)
+                    dp[b] = sp[b];
+            }
+        }
+        return flipped;
     }
 
     void CameraSource::setFrameCallback(FrameCallback cb)
