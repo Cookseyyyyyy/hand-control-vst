@@ -6,6 +6,18 @@
 
 namespace handcontrol::tracking
 {
+    bool pointInsideRoi(float cx, float cy, const RoiTransform& roi) noexcept
+    {
+        const float dx = cx - roi.centerX;
+        const float dy = cy - roi.centerY;
+        const float c =  std::cos(roi.rotationRad);
+        const float s =  std::sin(roi.rotationRad);
+        const float lx =  c * dx + s * dy;
+        const float ly = -s * dx + c * dy;
+        const float half = roi.size * 0.5f;
+        return std::abs(lx) <= half && std::abs(ly) <= half;
+    }
+
     RoiTransform roiFromLandmarks(const std::array<Point2D, numLandmarks>& lm) noexcept
     {
         RoiTransform roi;

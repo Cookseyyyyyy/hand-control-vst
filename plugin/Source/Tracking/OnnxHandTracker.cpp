@@ -38,7 +38,6 @@ namespace handcontrol::tracking
         constexpr float kPalmNmsIou      = 0.3f;
         constexpr float kHandEnterThresh = 0.55f;  // confidence needed to fill a slot
         constexpr float kHandExitThresh  = 0.4f;   // confidence below which a slot is dropped
-        constexpr float kSlotOverlapIou  = 0.5f;   // skip new detection if it overlaps an existing slot
         constexpr int   kMaxHands        = 2;
         constexpr int   kPalmLandmarks   = 7;
         constexpr int   kHandLandmarks   = 21;
@@ -92,22 +91,6 @@ namespace handcontrol::tracking
             return out;
         }
 
-        // Axis-aligned IoU between two ROIs, used for "is this new palm detection
-        // already covered by a tracked slot".
-        float roiIou(const RoiTransform& a, const RoiTransform& b) noexcept
-        {
-            const float aHalf = a.size * 0.5f;
-            const float bHalf = b.size * 0.5f;
-            const float ix1 = std::max(a.centerX - aHalf, b.centerX - bHalf);
-            const float iy1 = std::max(a.centerY - aHalf, b.centerY - bHalf);
-            const float ix2 = std::min(a.centerX + aHalf, b.centerX + bHalf);
-            const float iy2 = std::min(a.centerY + aHalf, b.centerY + bHalf);
-            const float iw = std::max(0.0f, ix2 - ix1);
-            const float ih = std::max(0.0f, iy2 - iy1);
-            const float inter = iw * ih;
-            const float un = a.size * a.size + b.size * b.size - inter;
-            return un > 0.0f ? inter / un : 0.0f;
-        }
     }
 
     struct OnnxHandTracker::Impl
@@ -485,12 +468,18 @@ namespace handcontrol::tracking
             {
                 RoiTransform candidateRoi = impl->roiFromPalm(det);
 
-                // Skip if this detection overlaps an already-tracked slot.
+                // Skip if this detection refers to a hand that's already tracked.
+                // The previous IoU check on two differently-sized ROIs (palm 2.6x
+                // vs landmark 1.65x) failed to detect this case, leading to one
+                // physical hand filling both slots. Use a centre-inside check
+                // against the slot's tighter landmark-derived ROI instead.
+                const float candCx = 0.5f * (det.x1 + det.x2);
+                const float candCy = 0.5f * (det.y1 + det.y2);
                 bool overlapsExisting = false;
                 for (const auto& s : impl->slots)
                 {
                     if (! s.active) continue;
-                    if (roiIou(s.roi, candidateRoi) > kSlotOverlapIou)
+                    if (pointInsideRoi(candCx, candCy, s.roi))
                     {
                         overlapsExisting = true;
                         break;

@@ -17,7 +17,8 @@ namespace handcontrol
         : juce::AudioProcessorEditor(&p),
           processor(p),
           preview(processor.getTracker()),
-          statusBar(processor.getTracker())
+          statusBar(processor.getTracker()),
+          midiMapPanel(processor.getValueTreeState())
     {
         setLookAndFeel(&theme);
         setResizable(true, true);
@@ -41,6 +42,7 @@ namespace handcontrol
 
         addAndMakeVisible(preview);
         addAndMakeVisible(statusBar);
+        addChildComponent(midiMapPanel);  // hidden by default
 
         struct MeterSpec
         {
@@ -94,6 +96,16 @@ namespace handcontrol
         addAndMakeVisible(holdToggle);
         addAndMakeVisible(mirrorToggle);
         addAndMakeVisible(roiToggle);
+        addAndMakeVisible(midiMapButton);
+        midiMapButton.setClickingTogglesState(true);
+        midiMapButton.onClick = [this]()
+        {
+            midiMapVisible = midiMapButton.getToggleState();
+            midiMapPanel.setVisible(midiMapVisible);
+            // Hide the meter grid when the panel is up - they share the same area.
+            for (auto& m : meters) m->setVisible(! midiMapVisible);
+            resized();
+        };
 
         smoothingSlider.setSliderStyle(juce::Slider::LinearHorizontal);
         smoothingSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 52, 18);
@@ -175,11 +187,14 @@ namespace handcontrol
         mirrorToggle.setBounds (controls1.removeFromLeft(100));
         holdToggle.setBounds   (controls1.removeFromLeft(140));
         roiToggle.setBounds    (controls1.removeFromLeft(110));
+        controls1.removeFromLeft(4);
+        midiMapButton.setBounds(controls1.removeFromLeft(110).reduced(0, 4));
         bounds.removeFromBottom(8);
 
         const bool showPreview = previewToggle.getToggleState();
         // 2 rows of 7 meters; allow more vertical space for them.
-        auto metersArea = showPreview
+        // The MIDI map panel takes the same area when toggled.
+        auto bottomArea = showPreview
             ? bounds.removeFromBottom(juce::jmax(170, bounds.getHeight() * 2 / 5))
             : bounds;
 
@@ -190,20 +205,27 @@ namespace handcontrol
         }
         preview.setVisible(showPreview);
 
-        const int rows = 2;
-        const int cols = 7;
-        const int cellW = metersArea.getWidth() / cols;
-        const int cellH = metersArea.getHeight() / rows;
-        for (int r = 0; r < rows; ++r)
+        if (midiMapVisible)
         {
-            for (int c = 0; c < cols; ++c)
+            midiMapPanel.setBounds(bottomArea);
+        }
+        else
+        {
+            const int rows = 2;
+            const int cols = 7;
+            const int cellW = bottomArea.getWidth() / cols;
+            const int cellH = bottomArea.getHeight() / rows;
+            for (int r = 0; r < rows; ++r)
             {
-                const auto idx = static_cast<size_t>(r * cols + c);
-                if (idx < meters.size())
-                    meters[idx]->setBounds(metersArea.getX() + c * cellW,
-                                           metersArea.getY() + r * cellH,
-                                           cellW - 4,
-                                           cellH - 4);
+                for (int c = 0; c < cols; ++c)
+                {
+                    const auto idx = static_cast<size_t>(r * cols + c);
+                    if (idx < meters.size())
+                        meters[idx]->setBounds(bottomArea.getX() + c * cellW,
+                                               bottomArea.getY() + r * cellH,
+                                               cellW - 4,
+                                               cellH - 4);
+                }
             }
         }
     }

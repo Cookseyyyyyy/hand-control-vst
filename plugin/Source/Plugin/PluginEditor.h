@@ -2,6 +2,7 @@
 
 #include "PluginProcessor.h"
 
+#include "../UI/MidiMapPanel.h"
 #include "../UI/ParameterMeter.h"
 #include "../UI/PreviewComponent.h"
 #include "../UI/StatusBar.h"
@@ -33,6 +34,7 @@ namespace handcontrol
 
         ui::PreviewComponent preview;
         ui::StatusBar statusBar;
+        ui::MidiMapPanel midiMapPanel;
 
         std::vector<std::unique_ptr<ui::ParameterMeter>> meters;
 
@@ -46,6 +48,7 @@ namespace handcontrol
         juce::ToggleButton holdToggle    { "Hold On Lost" };
         juce::ToggleButton mirrorToggle  { "Mirror" };
         juce::ToggleButton roiToggle     { "Show ROI" };
+        juce::TextButton   midiMapButton { "MIDI Map" };
 
         juce::Slider smoothingSlider;
         juce::Label smoothingLabel { {}, "Smoothing" };
@@ -60,6 +63,8 @@ namespace handcontrol
         std::unique_ptr<ButtonAttachment> mirrorAttach;
         std::unique_ptr<ButtonAttachment> roiAttach;
         std::unique_ptr<ComboAttachment>  cameraAttach;
+
+        bool midiMapVisible { false };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PluginEditor)
     };

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../Midi/MidiCcSender.h"
 #include "../Params/ParameterBridge.h"
 #include "../Tracking/HandTrackerThread.h"
 
@@ -27,7 +28,7 @@ namespace handcontrol
 
         const juce::String getName() const override { return JucePlugin_Name; }
         bool acceptsMidi() const override { return false; }
-        bool producesMidi() const override { return false; }
+        bool producesMidi() const override { return true; }
         bool isMidiEffect() const override { return false; }
         double getTailLengthSeconds() const override { return 0.0; }
 
@@ -43,15 +44,22 @@ namespace handcontrol
         juce::AudioProcessorValueTreeState& getValueTreeState() noexcept { return apvts; }
         handcontrol::params::ParameterBridge& getBridge() noexcept { return bridge; }
         handcontrol::tracking::HandTrackerThread& getTracker() noexcept { return *tracker; }
+        handcontrol::midi::MidiCcSender& getMidiSender() noexcept { return midiSender; }
 
         juce::String getLastStartError() const { return lastStartError; }
         void restartTracker();
+
+        /** Pulls the current MIDI mapping from APVTS into the sender. Called when
+            any midi_ch / midi_cc / midi_en parameter changes. Safe from any
+            thread - only writes atomic shadows in the sender. */
+        void syncMidiMappings();
 
     private:
         void parameterChanged(const juce::String& id, float newValue) override;
 
         juce::AudioProcessorValueTreeState apvts;
         handcontrol::params::ParameterBridge bridge;
+        handcontrol::midi::MidiCcSender midiSender;
         std::unique_ptr<handcontrol::tracking::HandTrackerThread> tracker;
         juce::String lastStartError;
 

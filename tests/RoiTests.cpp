@@ -112,6 +112,55 @@ HC_TEST(roiFromLandmarks_size_includes_enlarge_factor)
     HC_CHECK_NEAR(roi.size, 0.693f, 0.01f);
 }
 
+// Regression test for the v0.2 dual-slot bug: palm-derived ROI (large, ~2.6x)
+// and landmark-derived ROI (smaller, ~1.65x) for the same hand had IoU below
+// 0.5 and were treated as separate hands, filling both H1 and H2 slots with
+// the same physical hand. Centre-inside check fixes that.
+HC_TEST(pointInsideRoi_detects_same_hand_size_mismatch)
+{
+    // A landmark-derived ROI: small, axis-aligned, centred at (300, 400).
+    RoiTransform landmarkRoi;
+    landmarkRoi.centerX = 300.0f;
+    landmarkRoi.centerY = 400.0f;
+    landmarkRoi.size    = 200.0f;
+    landmarkRoi.rotationRad = 0.0f;
+
+    // A palm-derived ROI for the *same* hand would have its centre roughly
+    // inside the landmark ROI (palm is part of the hand) but be much larger.
+    // Pick a centre slightly offset from landmark centre but still well inside.
+    const float palmCentreX = 320.0f;
+    const float palmCentreY = 380.0f;
+
+    HC_CHECK(pointInsideRoi(palmCentreX, palmCentreY, landmarkRoi));
+
+    // A palm centre well outside the landmark ROI (e.g. 600 px away on the x
+    // axis) is correctly rejected.
+    HC_CHECK(! pointInsideRoi(900.0f, 400.0f, landmarkRoi));
+}
+
+HC_TEST(pointInsideRoi_handles_rotation)
+{
+    // A 45-degree rotated 200x200 ROI centred at the origin. Its corners
+    // reach to about (+/-141, 0) and (0, +/-141) in image coords - so
+    // (140, 0) is inside the rotated box but well outside an axis-aligned
+    // 200-square (which would only contain x in [-100, 100]).
+    RoiTransform axisAligned;
+    axisAligned.centerX = 0.0f; axisAligned.centerY = 0.0f;
+    axisAligned.size = 200.0f;
+    axisAligned.rotationRad = 0.0f;
+
+    RoiTransform rotated45 = axisAligned;
+    rotated45.rotationRad = 0.7853982f;  // pi/4
+
+    // Discriminating point on the rotated box's local x axis (a corner).
+    HC_CHECK(! pointInsideRoi(140.0f, 0.0f, axisAligned));   // outside axis-aligned
+    HC_CHECK(  pointInsideRoi(140.0f, 0.0f, rotated45));     // inside rotated
+
+    // A point well past the corner of either box: outside both.
+    HC_CHECK(! pointInsideRoi(200.0f, 200.0f, axisAligned));
+    HC_CHECK(! pointInsideRoi(200.0f, 200.0f, rotated45));
+}
+
 HC_TEST(roiFromLandmarks_rotation_tracks_hand_orientation)
 {
     // Vertical hand (fingers up in image coords, i.e. wrist has larger y than

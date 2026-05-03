@@ -19,4 +19,10 @@ namespace handcontrol::tracking
 
     inline constexpr float kHandBoxShiftY  = -0.1f;
     inline constexpr float kHandBoxEnlarge = 1.65f;
+
+    /** Returns true if the point (cx, cy) falls inside the oriented ROI.
+        Used by the tracker to decide whether a fresh palm detection refers
+        to a hand that's already being tracked, robust to size / rotation
+        differences between palm-derived and landmark-derived ROIs. */
+    bool pointInsideRoi(float cx, float cy, const RoiTransform& roi) noexcept;
 }

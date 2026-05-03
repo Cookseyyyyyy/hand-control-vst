@@ -1,5 +1,7 @@
 #pragma once
 
+#include <juce_core/juce_core.h>
+
 #include <array>
 #include <string_view>
 
@@ -70,4 +72,33 @@ namespace handcontrol::params
         h1HandX, h1HandY, h1Openness,
         h2HandX, h2HandY, h2Openness
     };
+
+    // ---- Per-measurement MIDI CC config (v0.3, non-automatable) -------------
+    //
+    // Three parameters per measurement: channel (1..16), CC number (0..127),
+    // and an enabled toggle. Stored in APVTS so they persist with the project.
+    // None are exposed for DAW automation (withAutomatable(false)) so they
+    // don't pollute the host's parameter list - they're only meant to be
+    // edited from the plugin's MIDI Map panel.
+    inline juce::String midiChannelId(MeasurementId id)
+    {
+        const auto base = measurementIds[static_cast<size_t>(id)];
+        return juce::String(base.data(), base.size()) + "_midi_ch";
+    }
+    inline juce::String midiCcNumberId(MeasurementId id)
+    {
+        const auto base = measurementIds[static_cast<size_t>(id)];
+        return juce::String(base.data(), base.size()) + "_midi_cc";
+    }
+    inline juce::String midiEnabledId(MeasurementId id)
+    {
+        const auto base = measurementIds[static_cast<size_t>(id)];
+        return juce::String(base.data(), base.size()) + "_midi_en";
+    }
+
+    // Default CC numbers: 20..33 (the MIDI spec leaves these undefined, so
+    // they're safe to use without colliding with standard CCs like volume,
+    // pan, modulation etc.). All start on channel 1 with sending enabled.
+    inline constexpr int defaultMidiCcBase = 20;
+    inline constexpr int defaultMidiChannel = 1;
 }

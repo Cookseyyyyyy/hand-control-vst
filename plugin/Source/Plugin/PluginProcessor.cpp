@@ -42,6 +42,19 @@ namespace handcontrol
         apvts.addParameterListener(juce::String(params::holdOnLost.data(),   params::holdOnLost.size()),   this);
         apvts.addParameterListener(juce::String(params::bypass.data(),       params::bypass.size()),       this);
         apvts.addParameterListener(juce::String(params::mirrorCamera.data(), params::mirrorCamera.size()), this);
+
+        // Listen on every per-measurement MIDI config param so the sender stays
+        // in sync with the user's edits in the MIDI Map panel (or with values
+        // restored from a saved project state).
+        for (int i = 0; i < params::numMeasurements; ++i)
+        {
+            const auto id = static_cast<params::MeasurementId>(i);
+            apvts.addParameterListener(params::midiChannelId(id),  this);
+            apvts.addParameterListener(params::midiCcNumberId(id), this);
+            apvts.addParameterListener(params::midiEnabledId(id),  this);
+        }
+
+        syncMidiMappings();
     }
 
     PluginProcessor::~PluginProcessor()
@@ -51,6 +64,14 @@ namespace handcontrol
         apvts.removeParameterListener(juce::String(params::holdOnLost.data(),   params::holdOnLost.size()),   this);
         apvts.removeParameterListener(juce::String(params::bypass.data(),       params::bypass.size()),       this);
         apvts.removeParameterListener(juce::String(params::mirrorCamera.data(), params::mirrorCamera.size()), this);
+
+        for (int i = 0; i < params::numMeasurements; ++i)
+        {
+            const auto id = static_cast<params::MeasurementId>(i);
+            apvts.removeParameterListener(params::midiChannelId(id),  this);
+            apvts.removeParameterListener(params::midiCcNumberId(id), this);
+            apvts.removeParameterListener(params::midiEnabledId(id),  this);
+        }
     }
 
     void PluginProcessor::prepareToPlay(double, int) {}
@@ -64,13 +85,22 @@ namespace handcontrol
         return in == out;
     }
 
-    void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+    void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiBuffer)
     {
         juce::ScopedNoDenormals noDenormals;
 
         // This is a control plugin: it doesn't transform audio, it just lets the
         // DAW see parameter automation generated from the tracker thread.
         bridge.flushToParameters();
+
+        // Emit MIDI CCs for any measurement whose 7-bit value changed since the
+        // last block. Single sample-0 event per param so any DAW MIDI-map mode
+        // captures the source CC reliably.
+        for (int i = 0; i < params::numMeasurements; ++i)
+        {
+            const auto id = static_cast<params::MeasurementId>(i);
+            midiSender.emitIfChanged(id, bridge.snapshot(id), midiBuffer, 0);
+        }
 
         // Pass audio through untouched.
         const auto numIn  = getTotalNumInputChannels();
@@ -124,6 +154,33 @@ namespace handcontrol
         else if (id == mirrorId)
         {
             tracker->setMirrorCamera(newValue > 0.5f);
+        }
+        else if (id.endsWith("_midi_ch") || id.endsWith("_midi_cc") || id.endsWith("_midi_en"))
+        {
+            // Any of the 42 MIDI config params changed - cheaper to re-sync all
+            // 14 mappings than parse the suffix and update one slot.
+            syncMidiMappings();
+        }
+    }
+
+    void PluginProcessor::syncMidiMappings()
+    {
+        for (int i = 0; i < params::numMeasurements; ++i)
+        {
+            const auto id = static_cast<params::MeasurementId>(i);
+
+            const auto* chParam = dynamic_cast<juce::AudioParameterInt*>(
+                apvts.getParameter(params::midiChannelId(id)));
+            const auto* ccParam = dynamic_cast<juce::AudioParameterInt*>(
+                apvts.getParameter(params::midiCcNumberId(id)));
+            const auto* enParam = dynamic_cast<juce::AudioParameterBool*>(
+                apvts.getParameter(params::midiEnabledId(id)));
+
+            handcontrol::midi::MidiCcSender::Mapping m;
+            m.channel  = chParam ? chParam->get() : params::defaultMidiChannel;
+            m.ccNumber = ccParam ? ccParam->get() : params::defaultMidiCcBase + i;
+            m.enabled  = enParam ? enParam->get() : true;
+            midiSender.setMapping(id, m);
         }
     }
 

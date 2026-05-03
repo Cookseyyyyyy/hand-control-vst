@@ -78,6 +78,30 @@ namespace handcontrol::params
             "Show ROI Overlay",
             false));
 
+        // ---- Per-measurement MIDI CC config (non-automatable) --------------
+        for (int i = 0; i < numMeasurements; ++i)
+        {
+            const auto id = static_cast<MeasurementId>(i);
+
+            layout.add(std::make_unique<juce::AudioParameterInt>(
+                juce::ParameterID { midiChannelId(id), 1 },
+                "MIDI Ch " + juce::String(i + 1),
+                1, 16, defaultMidiChannel,
+                juce::AudioParameterIntAttributes {}.withAutomatable(false)));
+
+            layout.add(std::make_unique<juce::AudioParameterInt>(
+                juce::ParameterID { midiCcNumberId(id), 1 },
+                "MIDI CC " + juce::String(i + 1),
+                0, 127, defaultMidiCcBase + i,
+                juce::AudioParameterIntAttributes {}.withAutomatable(false)));
+
+            layout.add(std::make_unique<juce::AudioParameterBool>(
+                juce::ParameterID { midiEnabledId(id), 1 },
+                "MIDI On " + juce::String(i + 1),
+                true,
+                juce::AudioParameterBoolAttributes {}.withAutomatable(false)));
+        }
+
         return layout;
     }
 }

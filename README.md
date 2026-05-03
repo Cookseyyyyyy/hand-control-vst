@@ -1,16 +1,18 @@
 # Hand Control VST
 
-A webcam-driven VST3 / AU plugin that turns pinching gestures into eight
-DAW-mappable parameters. Port of the original
-[OSCHandcontrol](https://github.com/) Python script, rebuilt as a self-
-contained plugin so it installs in one double-click and maps in Ableton with
-a right-click.
+A webcam-driven VST3 / AU plugin that turns hand gestures into 14
+DAW-mappable parameters and 14 MIDI CC messages. Spiritual successor to
+the original [OSCHandcontrol](https://github.com/) Python script, rebuilt
+as a self-contained plugin that installs in one double-click and maps in
+any DAW via standard MIDI Map mode.
 
 - **Inputs**: any USB or built-in webcam.
-- **Outputs**: eight `AudioParameterFloat`s in `[0, 1]`:
+- **Outputs (14 measurements per hand pair)**:
   - `H1_ThumbIndex_Distance`, `H1_ThumbIndex_Angle`
   - `H1_ThumbPinky_Distance`, `H1_ThumbPinky_Angle`
-  - `H2_*` (same four for the second hand)
+  - `H1_HandX`, `H1_HandY`, `H1_Openness`
+  - `H2_*` (same seven for the second hand)
+  - Each value also emitted as MIDI CC (default CC 20-33 on channel 1, configurable in the plugin).
 - **Platforms**: macOS (Apple Silicon + Intel) and Windows x64.
 - **Formats**: VST3, AU, Standalone.
 
@@ -30,23 +32,38 @@ a right-click.
 2. Double-click. The plugin installs to `C:\Program Files\Common Files\VST3`.
 3. Rescan plugins in your DAW.
 
-## Mapping in Ableton Live
+## Mapping to plugin parameters in Ableton Live
 
-1. Add **Hand Control** to any track (Audio Effects -> Hand Control).
-2. Enter Map mode (top-right, "MIDI" / "Key" toggle has a Map equivalent,
-   or right-click any control and choose _Map to..._).
-3. Right-click a parameter on another device (e.g. the cutoff of an Auto
-   Filter). Choose **Map to MIDI...** - actually no, for plugin parameters
-   use **Configure** on the Hand Control device header, then map from Macro
-   knobs, or expose the parameter into a Rack and assign a Macro.
+The recommended workflow uses MIDI Map mode, which works for any plugin
+on any track.
 
-The simplest workflow:
+1. Drop **Hand Control** on a track.
+2. Open Hand Control's UI and click the **MIDI Map** button to see (and
+   optionally change) the channel + CC number assigned to each measurement.
+3. Drop the target plugin on the same track or another track (e.g. Transit).
+4. Press **Cmd+M** (macOS) or **Ctrl+M** (Windows) to enter Ableton's MIDI
+   Map mode.
+5. Click the parameter you want to control (e.g. Transit's _Mix_ knob). It
+   highlights blue.
+6. Move your hand so the source measurement actually changes value
+   (e.g. pinch your thumb and index finger). Hand Control sends a CC,
+   Ableton captures the mapping.
+7. Press **Cmd/Ctrl+M** again to leave Map mode. The target parameter now
+   follows your hand in real time.
 
-1. Drop Hand Control on a track.
-2. Unfold the device to expose the eight measurement parameters.
-3. Click the configure (wrench) icon on any other device and map one of
-   its controls via an **Audio Effect Rack** Macro linked to a Hand Control
-   parameter.
+### Alternate workflow using DAW automation parameters
+
+Hand Control's measurements are also exposed as native DAW automation
+parameters. To use those instead of MIDI:
+
+1. Group both devices into an **Audio Effect Rack** (Cmd/Ctrl+G).
+2. In the rack, click the wrench (Configure) icon on the rack header.
+3. Click a Hand Control measurement and the target parameter to add both
+   to the rack's parameter list.
+4. Map both to the same Macro knob.
+
+Note that Macro routing is one-way (Macro drives params), so you'd usually
+prefer the MIDI flow for live performance.
 
 ## Building from source
 

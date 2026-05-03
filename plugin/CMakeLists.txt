@@ -9,7 +9,7 @@ juce_add_plugin(HandControlPlugin
     AU_MAIN_TYPE               "kAudioUnitType_Effect"
     IS_SYNTH                   FALSE
     NEEDS_MIDI_INPUT           FALSE
-    NEEDS_MIDI_OUTPUT          FALSE
+    NEEDS_MIDI_OUTPUT          TRUE
     IS_MIDI_EFFECT             FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     # We disable JUCE's built-in COPY_PLUGIN_AFTER_BUILD and handle installation
@@ -81,10 +81,14 @@ target_sources(HandControlPlugin PRIVATE
     Source/UI/PreviewComponent.h
     Source/UI/ParameterMeter.cpp
     Source/UI/ParameterMeter.h
+    Source/UI/MidiMapPanel.cpp
+    Source/UI/MidiMapPanel.h
     Source/UI/Theme.cpp
     Source/UI/Theme.h
     Source/UI/StatusBar.cpp
-    Source/UI/StatusBar.h)
+    Source/UI/StatusBar.h
+    Source/Midi/MidiCcSender.cpp
+    Source/Midi/MidiCcSender.h)
 
 target_include_directories(HandControlPlugin PRIVATE
     Source

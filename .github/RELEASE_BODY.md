@@ -33,41 +33,49 @@ Signed/notarized `.pkg` installers are planned for v1.0.
 5. Windows will prompt for camera permission the first time the plugin
    opens a webcam.
 
-If you previously installed v0.1 and Ableton blacklisted it, also delete the
-`Hand Control` row from `%LOCALAPPDATA%\Ableton\Live Database\Live-plugins-1.db`
+**Upgrading from v0.2:** v0.3 changes the plugin's I/O capability (it now
+produces MIDI). After installing, **remove and re-add Hand Control** in any
+project that previously used v0.2, otherwise Ableton may refuse to load the
+new version.
+
+If Ableton has cached a previous failed Hand Control scan, also delete its
+`Hand Control` rows from `%LOCALAPPDATA%\Ableton\Live Database\Live-plugins-1.db`
 (Ableton must be closed) before rescanning.
 
-## What's new in v0.2 (vs v0.1)
+## What's new in v0.3 (vs v0.2)
 
-### Tracking quality
-- **MediaPipe-style ROI reuse**: the landmark model now keeps tracking once
-  it has a lock; the palm detector only runs to find new hands. Fixes the
-  "drops in and out" behaviour from v0.1.
-- **Confidence hysteresis** (enter 0.55, exit 0.4): single-frame conf dips
-  no longer kill the hand.
-- **Per-landmark One-Euro smoothing** (42 filters per slot) instead of
-  per-output: jitter is removed at the source so derived measurements
-  (especially angles) get dramatically smoother.
+### Bug fix: same hand assigned to both H1 and H2
 
-### New mappable parameters (additive, originals unchanged)
-- `H1_HandX` / `H1_HandY`: hand centre position 0..1 in frame
-- `H1_Openness`: closed fist = 0, fully spread = 1
-- `H2_*` equivalents
-- Total mappable params: **14** (was 8). Existing v0.1 mappings still work.
+When a single physical hand was visible, v0.2 sometimes filled both tracking
+slots with that one hand, so H1 and H2 showed identical readings and the
+meter grid looked "doubled". The root cause was an axis-aligned IoU check
+between palm-derived and landmark-derived ROIs of different sizes: even for
+the same hand, IoU often fell below the overlap threshold and the second
+slot was incorrectly accepted. v0.3 replaces it with a centre-inside-ROI
+test that is robust to size and rotation differences.
 
-### UX
-- **Mirror Camera** toggle (default on): webcam users see themselves
-  mirror-image, as expected.
-- **Status bar diagnostics**: per-slot landmark confidence and last palm
-  detector score live, plus `Hand 1 lost (1.4s)` when a slot drops, so
-  you can see exactly why a meter has frozen.
-- **Show ROI** toggle: draws the oriented region the model is looking at
-  for each tracked hand. Useful debugging when tracking misbehaves.
+### MIDI CC output (the big new feature)
 
-### Plugin loading fix
-- Replaced delay-loaded ONNX Runtime with manual runtime resolution, which
-  removes onnxruntime.dll from the import table entirely. Fixes the
-  "scanner rejects the plugin" issue some users hit on v0.1.
+Each of the 14 measurements is now also emitted as a MIDI CC message.
+
+- **Defaults**: CC 20 through CC 33 on channel 1, all enabled.
+- **Configurable**: open the new **MIDI Map** panel in the plugin UI to
+  change the channel and CC number for any measurement, or disable
+  individual rows.
+- **Hysteresis**: only sends a new CC when the 7-bit value actually
+  changes. Slowly drifting measurements don't spam the buffer.
+- **Persisted**: MIDI mappings save with your project.
+
+### Universal mapping flow
+
+In Ableton (or any DAW with a MIDI Map mode):
+
+1. Drop Hand Control on a track.
+2. Drop the target plugin on the same track.
+3. Press Cmd/Ctrl+M to enter MIDI Map mode.
+4. Click the target parameter.
+5. Move your hand so the corresponding CC fires.
+6. Mapping captured.
 
 ## Known limitations
 
