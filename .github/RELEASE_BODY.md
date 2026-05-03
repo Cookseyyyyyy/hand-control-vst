@@ -33,19 +33,41 @@ Signed/notarized `.pkg` installers are planned for v1.0.
 5. Windows will prompt for camera permission the first time the plugin
    opens a webcam.
 
-## What's in this release
+If you previously installed v0.1 and Ableton blacklisted it, also delete the
+`Hand Control` row from `%LOCALAPPDATA%\Ableton\Live Database\Live-plugins-1.db`
+(Ableton must be closed) before rescanning.
 
-- **Real hand tracking** out of the box: MediaPipe palm detection +
-  hand-landmark ONNX models run inside the plugin via ONNX Runtime.
-  No downloads, no setup - everything is embedded in the plugin binary.
-- **Eight mappable DAW parameters per-hand** (thumb-index + thumb-pinky
-  distance and angle, up to two hands). Right-click -> Map in Ableton to
-  assign any parameter to a finger pinch.
-- **Math ported verbatim** from the original `OSCHandcontrol.py` so the
-  feel is identical for existing users.
-- **Live landmark preview** with per-hand accent colours in the plugin window.
-- **One-Euro smoothing** + hand identity stabilisation so Hand 1 / Hand 2 stay
-  pinned to the same physical hand across frames.
+## What's new in v0.2 (vs v0.1)
+
+### Tracking quality
+- **MediaPipe-style ROI reuse**: the landmark model now keeps tracking once
+  it has a lock; the palm detector only runs to find new hands. Fixes the
+  "drops in and out" behaviour from v0.1.
+- **Confidence hysteresis** (enter 0.55, exit 0.4): single-frame conf dips
+  no longer kill the hand.
+- **Per-landmark One-Euro smoothing** (42 filters per slot) instead of
+  per-output: jitter is removed at the source so derived measurements
+  (especially angles) get dramatically smoother.
+
+### New mappable parameters (additive, originals unchanged)
+- `H1_HandX` / `H1_HandY`: hand centre position 0..1 in frame
+- `H1_Openness`: closed fist = 0, fully spread = 1
+- `H2_*` equivalents
+- Total mappable params: **14** (was 8). Existing v0.1 mappings still work.
+
+### UX
+- **Mirror Camera** toggle (default on): webcam users see themselves
+  mirror-image, as expected.
+- **Status bar diagnostics**: per-slot landmark confidence and last palm
+  detector score live, plus `Hand 1 lost (1.4s)` when a slot drops, so
+  you can see exactly why a meter has frozen.
+- **Show ROI** toggle: draws the oriented region the model is looking at
+  for each tracked hand. Useful debugging when tracking misbehaves.
+
+### Plugin loading fix
+- Replaced delay-loaded ONNX Runtime with manual runtime resolution, which
+  removes onnxruntime.dll from the import table entirely. Fixes the
+  "scanner rejects the plugin" issue some users hit on v0.1.
 
 ## Known limitations
 
